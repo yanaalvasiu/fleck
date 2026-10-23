@@ -5,6 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/yanaalvasiu/fleck/internal/config"
+	"github.com/yanaalvasiu/fleck/internal/output"
+	"github.com/yanaalvasiu/fleck/internal/safety"
 )
 
 func TestSafeCleanCandidatesUsesTopLevelCachesOnly(t *testing.T) {
@@ -47,5 +51,33 @@ func TestGroupCleanItemsAggregatesBundleFamilies(t *testing.T) {
 	}
 	if groups[1].Name != "go-build" || groups[1].Count != 1 {
 		t.Fatalf("go-build group = %#v, want one item", groups[1])
+	}
+}
+
+func TestCleanMovesCacheToTrash(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cache := filepath.Join(home, "Library", "Caches", "ExampleApp")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	item := filepath.Join(cache, "cache.db")
+	if err := os.WriteFile(item, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := safety.NewPolicy(home, []string{filepath.Join(home, "Library")}, config.Config{}.Whitelist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveToTrashInternal(home, p, cache, "clean", output.Options{}, false, false); err != nil {
+		t.Fatalf("moveToTrashInternal() error = %v", err)
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("cache still exists after move: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".Trash", "ExampleApp")); err != nil {
+		t.Fatalf("cache was not moved to Trash: %v", err)
 	}
 }

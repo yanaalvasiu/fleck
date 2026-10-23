@@ -40,7 +40,10 @@ func move(path, elevated string) error {
 		dest = filepath.Join(trashDir, fmt.Sprintf("%s.%d", base, time.Now().UnixNano()))
 	}
 	if elevated == "sudo" {
-		if err := exec.Command("sudo", "mv", "--", path, dest).Run(); err == nil {
+		// macOS ships BSD mv, which does not consistently accept GNU's --
+		// separator. Paths are absolute and already validated by safety.Policy;
+		// exec.Command still passes them as separate arguments.
+		if err := exec.Command("sudo", "mv", path, dest).Run(); err == nil {
 			return nil
 		} else {
 			return fmt.Errorf("sudo move to Trash failed: %w", err)

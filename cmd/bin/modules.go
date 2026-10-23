@@ -229,27 +229,28 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 	return nil
 }
 func cleanCmd(args []string, o output.Options, home string, cfg config.Config) error {
-	systemCandidates, err := safeSystemCleanCandidates()
-	if err != nil {
-		return err
-	}
 	adminGranted := false
 	if output.IsTTY() && !o.JSON && !o.DryRun {
-		continueScan, err := cleanIntro(len(systemCandidates) > 0)
+		continueScan, err := cleanIntro()
 		if err != nil {
 			return err
 		}
 		if !continueScan {
 			return nil
 		}
-		if len(systemCandidates) > 0 {
-			if err := requestAdminAccess(); err != nil {
-				return err
-			}
-			adminGranted = true
+		if err := requestAdminAccess(); err != nil {
+			return err
 		}
+		adminGranted = true
 	}
 	p, err := newPolicy(home, cfg)
+	if err != nil {
+		return err
+	}
+	if output.IsTTY() && !o.JSON && !o.DryRun {
+		fmt.Println("\r\nScanning approved cache locations...")
+	}
+	systemCandidates, err := safeSystemCleanCandidates()
 	if err != nil {
 		return err
 	}
@@ -266,6 +267,9 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return err
 	}
 	candidates = append(systemCandidates, candidates...)
+	if output.IsTTY() && !o.JSON && !o.DryRun {
+		fmt.Printf("✓ Scan complete: %d approved cache location(s) found.\n", len(candidates))
+	}
 	if o.JSON {
 		return output.Print(map[string]any{"items": candidates, "count": len(candidates)}, o)
 	}
@@ -294,22 +298,41 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 			return err
 		}
 	}
+	moved, skipped, failed := 0, 0, 0
 	for _, x := range candidates {
-		if _, e := p.Validate(x); e == nil {
-			useSudo := elevated && needsElevation(x)
-			if !useSudo && needsElevation(x) {
-				fmt.Println("skip (requires sudo):", x)
-				continue
-			}
-			if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
-				return e
-			}
+		if _, e := p.Validate(x); e != nil {
+			fmt.Printf("skip: %s (%v)\n", x, e)
+			skipped++
+			continue
 		}
+		useSudo := elevated && needsElevation(x)
+		if !useSudo && needsElevation(x) {
+			fmt.Println("skip (requires sudo):", x)
+			skipped++
+			continue
+		}
+		if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
+			fmt.Printf("failed: %s (%v)\n", x, e)
+			failed++
+			continue
+		}
+		moved++
+	}
+	fmt.Printf("\nMoved %d item(s) to Trash", moved)
+	if skipped > 0 || failed > 0 {
+		fmt.Printf("; skipped %d; failed %d", skipped, failed)
+	}
+	fmt.Println(".")
+	if failed > 0 {
+		return fmt.Errorf("%d cache item(s) could not be moved to Trash", failed)
+	}
+	if moved == 0 {
+		return fmt.Errorf("no cache items were moved to Trash")
 	}
 	return nil
 }
 
-func cleanIntro(systemCaches bool) (bool, error) {
+func cleanIntro() (bool, error) {
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -329,11 +352,7 @@ func cleanIntro(systemCaches bool) (bool, error) {
 	fmt.Print("\033[H\033[2J")
 	fmt.Printf("  %sClean Your Mac%s\r\n\r\n", title, reset)
 	fmt.Printf("  %sⓘ Use --dry-run to preview, --whitelist to manage protected paths%s\r\n", muted, reset)
-	prompt := "Protected items may require administrator access."
-	if systemCaches {
-		prompt = "System cleanup requires administrator access."
-	}
-	fmt.Printf("  %s›%s %s %sEnter%s continue, %sSpace%s skip: ", accent, reset, prompt, keyStyle, reset, keyStyle, reset)
+	fmt.Printf("  %s›%s Enter to authorize, scan, and clean caches; %sSpace%s to cancel: ", accent, reset, keyStyle, reset)
 
 	var key [1]byte
 	for {
