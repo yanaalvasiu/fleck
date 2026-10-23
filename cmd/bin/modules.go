@@ -233,6 +233,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	if err != nil {
 		return err
 	}
+	adminGranted := false
 	if output.IsTTY() && !o.JSON && !o.DryRun {
 		continueScan, err := cleanIntro(len(systemCandidates) > 0)
 		if err != nil {
@@ -245,6 +246,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 			if err := requestAdminAccess(); err != nil {
 				return err
 			}
+			adminGranted = true
 		}
 	}
 	p, err := newPolicy(home, cfg)
@@ -285,9 +287,12 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 			protected = append(protected, x)
 		}
 	}
-	elevated, err := requestElevation("Clean", protected, o)
-	if err != nil {
-		return err
+	elevated := adminGranted
+	if len(protected) > 0 && !adminGranted {
+		elevated, err = requestElevation("Clean", protected, o)
+		if err != nil {
+			return err
+		}
 	}
 	for _, x := range candidates {
 		if _, e := p.Validate(x); e == nil {
