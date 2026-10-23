@@ -435,17 +435,52 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 			continue
 		}
 		categoryTotal := sumPlanBytes(items)
-		fmt.Printf("%s➤ %s%s\n", accent, category, reset)
-		for _, item := range items {
-			total += item.Bytes
-			fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(item.Bytes), item.Name)
+		fmt.Printf("%s➤ %s%s · %d items · %s\n", accent, category, reset, len(items), formatBytes(categoryTotal))
+		for _, group := range groupCleanItems(items) {
+			total += group.Bytes
+			if group.Count > 1 {
+				fmt.Printf("  %s✓%s %-24s · %d items · %s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes))
+			} else {
+				fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(group.Bytes), group.Name)
+			}
 		}
-		fmt.Printf("  %s%s · %d items%s\n\n", muted, formatBytes(categoryTotal), len(items), reset)
+		fmt.Println()
 	}
 	fmt.Printf("\n%sTotal reclaimable: %s%s\n", yellow, formatBytes(total), reset)
 	if !dryRun {
 		fmt.Printf("%sAdministrator access, if needed, will be requested only after confirmation.%s\n", muted, reset)
 	}
+}
+
+type cleanDisplayGroup struct {
+	Name  string
+	Count int
+	Bytes int64
+}
+
+func groupCleanItems(items []cleanPlanItem) []cleanDisplayGroup {
+	groups := make([]cleanDisplayGroup, 0, len(items))
+	indices := make(map[string]int, len(items))
+	for _, item := range items {
+		name := cleanFamily(item.Name)
+		index, ok := indices[name]
+		if !ok {
+			indices[name] = len(groups)
+			groups = append(groups, cleanDisplayGroup{Name: name})
+			index = len(groups) - 1
+		}
+		groups[index].Count++
+		groups[index].Bytes += item.Bytes
+	}
+	return groups
+}
+
+func cleanFamily(name string) string {
+	parts := strings.Split(name, ".")
+	if len(parts) >= 2 && (parts[0] == "com" || parts[0] == "org" || parts[0] == "net") {
+		return parts[0] + "." + parts[1]
+	}
+	return name
 }
 
 func sumPlanBytes(plan []cleanPlanItem) int64 {

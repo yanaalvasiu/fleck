@@ -32,3 +32,20 @@ func TestSafeCleanCandidatesUsesTopLevelCachesOnly(t *testing.T) {
 		t.Fatalf("safeCleanCandidates() = %#v, want [%q]", items, want)
 	}
 }
+
+func TestGroupCleanItemsAggregatesBundleFamilies(t *testing.T) {
+	groups := groupCleanItems([]cleanPlanItem{
+		{Name: "com.apple.bird", Bytes: 1024},
+		{Name: "com.apple.parsecd", Bytes: 2048},
+		{Name: "go-build", Bytes: 4096},
+	})
+	if len(groups) != 2 {
+		t.Fatalf("groupCleanItems() returned %d groups, want 2", len(groups))
+	}
+	if groups[0].Name != "com.apple" || groups[0].Count != 2 || groups[0].Bytes != 3072 {
+		t.Fatalf("com.apple group = %#v, want 2 items and 3072 bytes", groups[0])
+	}
+	if groups[1].Name != "go-build" || groups[1].Count != 1 {
+		t.Fatalf("go-build group = %#v, want one item", groups[1])
+	}
+}
