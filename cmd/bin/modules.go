@@ -252,6 +252,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return fmt.Errorf("nothing to do")
 	}
 	plan := makeCleanPlan(candidates)
+	fmt.Print("\033[H\033[2J")
 	printCleanPlan(plan, o.DryRun, len(cfg.Whitelist))
 	if o.DryRun {
 		return nil
@@ -325,6 +326,7 @@ func cleanIntro() (bool, error) {
 type cleanPlanItem struct {
 	Path     string `json:"path"`
 	Category string `json:"category"`
+	Name     string `json:"name"`
 	Bytes    int64  `json:"bytes"`
 }
 
@@ -333,11 +335,26 @@ func makeCleanPlan(paths []string) []cleanPlanItem {
 	for _, path := range paths {
 		plan = append(plan, cleanPlanItem{
 			Path:     path,
-			Category: "User caches",
+			Category: cleanCategory(path),
+			Name:     filepath.Base(path),
 			Bytes:    directorySize(path),
 		})
 	}
 	return plan
+}
+
+func cleanCategory(path string) string {
+	name := strings.ToLower(filepath.Base(path))
+	switch {
+	case strings.Contains(name, "brave"), strings.Contains(name, "chrome"), strings.Contains(name, "firefox"), strings.Contains(name, "edge"):
+		return "Browsers"
+	case name == "go-build", name == "homebrew", strings.Contains(name, "npm"), strings.Contains(name, "pnpm"), strings.Contains(name, "yarn"), strings.Contains(name, "pip"), strings.Contains(name, "playwright"):
+		return "Developer tools"
+	case strings.HasPrefix(name, "com.apple."):
+		return "App caches"
+	default:
+		return "User essentials"
+	}
 }
 
 func directorySize(root string) int64 {
@@ -373,10 +390,22 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 		fmt.Printf("%sⓘ Dry run: no files will be changed.%s\n", muted, reset)
 	}
 	fmt.Printf("%s⚙%s User home | %sWhitelist: %d configured entries%s\n\n", muted, reset, muted, whitelistCount, reset)
-	fmt.Printf("%s➤ User caches%s\n", accent, reset)
+	groups := map[string][]cleanPlanItem{}
 	for _, item := range plan {
-		total += item.Bytes
-		fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(item.Bytes), item.Path)
+		groups[item.Category] = append(groups[item.Category], item)
+	}
+	for _, category := range []string{"User essentials", "App caches", "Browsers", "Developer tools"} {
+		items := groups[category]
+		if len(items) == 0 {
+			continue
+		}
+		categoryTotal := sumPlanBytes(items)
+		fmt.Printf("%s➤ %s%s\n", accent, category, reset)
+		for _, item := range items {
+			total += item.Bytes
+			fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(item.Bytes), item.Name)
+		}
+		fmt.Printf("  %s%s · %d items%s\n\n", muted, formatBytes(categoryTotal), len(items), reset)
 	}
 	fmt.Printf("\n%sTotal reclaimable: %s%s\n", yellow, formatBytes(total), reset)
 	if !dryRun {
