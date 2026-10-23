@@ -5,10 +5,10 @@ Fleck is an open-source, no-telemetry macOS utility CLI with four cautious modul
 ## Install
 
 ```sh
-brew install <GH_USER>/tap/fleck
+brew install fleck
 ```
 
-Replace `<GH_USER>` with the GitHub owner before publishing.
+Source repository: https://github.com/yanaalvasiu/fleck
 
 ## Safety model
 
