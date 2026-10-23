@@ -1,0 +1,14 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: Release
+on:
+  push:
+    tags: ['v*.*.*']
+jobs:
+  release:
+    runs-on: macos-14
+    permissions: {contents: write}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: goreleaser/goreleaser-action@v6
+        with: {distribution: goreleaser, version: latest, args: release --clean}
+        env: {GITHUB_TOKEN: '${{ secrets.GITHUB_TOKEN }}'}

@@ -1,0 +1,21 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+version: 2
+builds:
+  - id: bin
+    main: ./cmd/bin
+    goos: [darwin]
+    goarch: [amd64, arm64]
+    CGO_ENABLED: "0"
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+      - -X main.commit={{.Commit}}
+      - -X main.buildDate={{.Date}}
+archives:
+  - formats: [tar.gz]
+checksum:
+  name_template: checksums.txt
+release:
+  github:
+    owner: <GH_USER>
+    name: <BIN>
