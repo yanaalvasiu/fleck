@@ -292,10 +292,19 @@ func cleanIntro() (bool, error) {
 	}
 	defer func() { _ = term.Restore(fd, state) }()
 
+	reset, title, muted, accent, keyStyle := "", "", "", "", ""
+	if os.Getenv("NO_COLOR") == "" {
+		reset = "\033[0m"
+		title = "\033[1;38;5;141m"
+		muted = "\033[38;5;245m"
+		accent = "\033[38;5;81m"
+		keyStyle = "\033[1;38;5;117m"
+	}
+
 	fmt.Print("\033[H\033[2J")
-	fmt.Print("Clean Your Mac\r\n\r\n")
-	fmt.Print("ⓘ Use --dry-run to preview, --whitelist to manage protected paths\r\n")
-	fmt.Print("› Protected items may require administrator access. Enter continue, Space skip: ")
+	fmt.Printf("  %sClean Your Mac%s\r\n\r\n", title, reset)
+	fmt.Printf("  %sⓘ Use --dry-run to preview, --whitelist to manage protected paths%s\r\n", muted, reset)
+	fmt.Printf("  %s›%s Protected items may require administrator access. %sEnter%s continue, %sSpace%s skip: ", accent, reset, keyStyle, reset, keyStyle, reset)
 
 	var key [1]byte
 	for {
