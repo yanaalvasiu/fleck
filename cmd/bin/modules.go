@@ -238,16 +238,15 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	if o.JSON {
 		return output.Print(map[string]any{"items": candidates, "count": len(candidates)}, o)
 	}
-	for _, x := range candidates {
-		fmt.Println(x)
-	}
 	if len(candidates) == 0 {
 		return fmt.Errorf("nothing to do")
 	}
+	plan := makeCleanPlan(candidates)
+	printCleanPlan(plan, o.DryRun)
 	if o.DryRun {
 		return nil
 	}
-	if !confirm(o, "Move these known-safe cache containers to Trash?") {
+	if !confirm(o, "Move the items in this plan to Trash?") {
 		return fmt.Errorf("operation refused")
 	}
 	var protected []string
@@ -273,6 +272,81 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		}
 	}
 	return nil
+}
+
+type cleanPlanItem struct {
+	Path     string `json:"path"`
+	Category string `json:"category"`
+	Bytes    int64  `json:"bytes"`
+}
+
+func makeCleanPlan(paths []string) []cleanPlanItem {
+	plan := make([]cleanPlanItem, 0, len(paths))
+	for _, path := range paths {
+		plan = append(plan, cleanPlanItem{
+			Path:     path,
+			Category: "User caches",
+			Bytes:    directorySize(path),
+		})
+	}
+	return plan
+}
+
+func directorySize(root string) int64 {
+	var total int64
+	_ = filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		info, err := entry.Info()
+		if err == nil {
+			total += info.Size()
+		}
+		return nil
+	})
+	return total
+}
+
+func printCleanPlan(plan []cleanPlanItem, dryRun bool) {
+	total := int64(0)
+	fmt.Println("Clean Your Mac")
+	fmt.Println("ⓘ Preview first. Confirm before anything is moved to Trash.")
+	if dryRun {
+		fmt.Println("ⓘ Dry run: no files will be changed.")
+	}
+	fmt.Println()
+	fmt.Printf("› User caches · %d items · %s\n", len(plan), formatBytes(sumPlanBytes(plan)))
+	for _, item := range plan {
+		total += item.Bytes
+		fmt.Printf("  • %-8s %s\n", formatBytes(item.Bytes), item.Path)
+	}
+	fmt.Printf("\nTotal reclaimable: %s\n", formatBytes(total))
+	if !dryRun {
+		fmt.Println("Administrator access, if needed, will be requested only after confirmation.")
+	}
+}
+
+func sumPlanBytes(plan []cleanPlanItem) int64 {
+	var total int64
+	for _, item := range plan {
+		total += item.Bytes
+	}
+	return total
+}
+
+func formatBytes(bytes int64) string {
+	if bytes < 1024 {
+		return fmt.Sprintf("%d B", bytes)
+	}
+	units := []string{"KB", "MB", "GB", "TB"}
+	value := float64(bytes)
+	for _, unit := range units {
+		value /= 1024
+		if value < 1024 || unit == "TB" {
+			return fmt.Sprintf("%.1f %s", value, unit)
+		}
+	}
+	return fmt.Sprintf("%d B", bytes)
 }
 
 // safeCleanCandidates deliberately plans only top-level cache containers.
