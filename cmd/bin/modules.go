@@ -19,6 +19,7 @@ import (
 
 	"github.com/yanaalvasiu/fleck/internal/config"
 	"github.com/yanaalvasiu/fleck/internal/output"
+	"github.com/yanaalvasiu/fleck/internal/safety"
 	"golang.org/x/term"
 )
 
@@ -228,23 +229,41 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 	return nil
 }
 func cleanCmd(args []string, o output.Options, home string, cfg config.Config) error {
+	systemCandidates, err := safeSystemCleanCandidates()
+	if err != nil {
+		return err
+	}
 	if output.IsTTY() && !o.JSON && !o.DryRun {
-		continueScan, err := cleanIntro()
+		continueScan, err := cleanIntro(len(systemCandidates) > 0)
 		if err != nil {
 			return err
 		}
 		if !continueScan {
 			return nil
 		}
+		if len(systemCandidates) > 0 {
+			if err := requestAdminAccess(); err != nil {
+				return err
+			}
+		}
 	}
 	p, err := newPolicy(home, cfg)
 	if err != nil {
 		return err
 	}
+	if len(systemCandidates) > 0 {
+		roots := append([]string{}, p.AllowedRoots...)
+		roots = append(roots, "/Library/Caches")
+		p, err = safety.NewPolicy(home, roots, cfg.Whitelist)
+		if err != nil {
+			return err
+		}
+	}
 	candidates, err := safeCleanCandidates(home)
 	if err != nil {
 		return err
 	}
+	candidates = append(systemCandidates, candidates...)
 	if o.JSON {
 		return output.Print(map[string]any{"items": candidates, "count": len(candidates)}, o)
 	}
@@ -285,7 +304,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	return nil
 }
 
-func cleanIntro() (bool, error) {
+func cleanIntro(systemCaches bool) (bool, error) {
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -305,7 +324,11 @@ func cleanIntro() (bool, error) {
 	fmt.Print("\033[H\033[2J")
 	fmt.Printf("  %sClean Your Mac%s\r\n\r\n", title, reset)
 	fmt.Printf("  %sⓘ Use --dry-run to preview, --whitelist to manage protected paths%s\r\n", muted, reset)
-	fmt.Printf("  %s›%s Protected items may require administrator access. %sEnter%s continue, %sSpace%s skip: ", accent, reset, keyStyle, reset, keyStyle, reset)
+	prompt := "Protected items may require administrator access."
+	if systemCaches {
+		prompt = "System cleanup requires administrator access."
+	}
+	fmt.Printf("  %s›%s %s %sEnter%s continue, %sSpace%s skip: ", accent, reset, prompt, keyStyle, reset, keyStyle, reset)
 
 	var key [1]byte
 	for {
@@ -321,6 +344,15 @@ func cleanIntro() (bool, error) {
 			return true, nil
 		}
 	}
+}
+
+func requestAdminAccess() error {
+	fmt.Println("\r\nEnter your credentials:")
+	if err := exec.Command("sudo", "-v").Run(); err != nil {
+		return fmt.Errorf("administrator access was not granted: %w", err)
+	}
+	fmt.Println("✓ Admin access granted")
+	return nil
 }
 
 type cleanPlanItem struct {
@@ -345,6 +377,9 @@ func makeCleanPlan(paths []string) []cleanPlanItem {
 
 func cleanCategory(path string) string {
 	name := strings.ToLower(filepath.Base(path))
+	if strings.HasPrefix(filepath.Clean(path), "/Library/Caches/") {
+		return "System caches"
+	}
 	switch {
 	case strings.Contains(name, "brave"), strings.Contains(name, "chrome"), strings.Contains(name, "firefox"), strings.Contains(name, "edge"):
 		return "Browsers"
@@ -394,7 +429,7 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 	for _, item := range plan {
 		groups[item.Category] = append(groups[item.Category], item)
 	}
-	for _, category := range []string{"User essentials", "App caches", "Browsers", "Developer tools"} {
+	for _, category := range []string{"System caches", "User essentials", "App caches", "Browsers", "Developer tools"} {
 		items := groups[category]
 		if len(items) == 0 {
 			continue
@@ -448,6 +483,28 @@ func safeCleanCandidates(home string) ([]string, error) {
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read user cache directory: %w", err)
+	}
+
+	candidates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(cacheRoot, entry.Name()))
+	}
+	return candidates, nil
+}
+
+// safeSystemCleanCandidates is intentionally limited to direct children of
+// /Library/Caches. It does not scan or authorize arbitrary system paths.
+func safeSystemCleanCandidates() ([]string, error) {
+	const cacheRoot = "/Library/Caches"
+	entries, err := os.ReadDir(cacheRoot)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read system cache directory: %w", err)
 	}
 
 	candidates := make([]string, 0, len(entries))
