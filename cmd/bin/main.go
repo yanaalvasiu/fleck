@@ -104,7 +104,19 @@ func help() {
 }
 func fail(code int, msg string) { fmt.Fprintln(os.Stderr, msg); os.Exit(code) }
 func versionCmd(o output.Options) {
-	_ = output.Print(map[string]string{"version": version, "commit": commit, "build_date": buildDate, "install_path": os.Args[0], "go": runtime.Version()}, o)
+	installPath := os.Args[0]
+	if executable, err := os.Executable(); err == nil {
+		installPath = executable
+		if resolved, err := filepath.EvalSymlinks(executable); err == nil {
+			installPath = resolved
+		}
+	}
+	info := map[string]string{"version": version, "commit": commit, "build_date": buildDate, "install_path": installPath, "go": runtime.Version()}
+	if o.JSON {
+		_ = output.Print(info, o)
+		return
+	}
+	fmt.Printf("%s %s\ncommit: %s\nbuild date: %s\ninstall path: %s\ngo: %s\n", binName, version, commit, buildDate, installPath, runtime.Version())
 }
 func historyCmd(home string, o output.Options) error {
 	e, err := oplog.Read(home, binName)
