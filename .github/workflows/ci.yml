@@ -1,0 +1,16 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+name: CI
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.24.x'}
+      - run: go test -race ./...
+      - uses: golangci/golangci-lint-action@v6
+        with: {version: latest}
+      - name: Dependency license compatibility
+        run: |
+          test -z "$(go list -m -json all | grep -E 'GPL|AGPL|LGPL' || true)"
