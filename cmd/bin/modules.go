@@ -19,6 +19,7 @@ import (
 
 	"github.com/yanaalvasiu/fleck/internal/config"
 	"github.com/yanaalvasiu/fleck/internal/output"
+	"golang.org/x/term"
 )
 
 type portRow struct {
@@ -227,6 +228,15 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 	return nil
 }
 func cleanCmd(args []string, o output.Options, home string, cfg config.Config) error {
+	if output.IsTTY() && !o.JSON && !o.DryRun {
+		continueScan, err := cleanIntro()
+		if err != nil {
+			return err
+		}
+		if !continueScan {
+			return nil
+		}
+	}
 	p, err := newPolicy(home, cfg)
 	if err != nil {
 		return err
@@ -272,6 +282,35 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		}
 	}
 	return nil
+}
+
+func cleanIntro() (bool, error) {
+	fd := int(os.Stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return false, fmt.Errorf("enable clean prompt: %w", err)
+	}
+	defer func() { _ = term.Restore(fd, state) }()
+
+	fmt.Print("\033[H\033[2J")
+	fmt.Print("Clean Your Mac\r\n\r\n")
+	fmt.Print("ⓘ Use --dry-run to preview, --whitelist to manage protected paths\r\n")
+	fmt.Print("› Protected items may require administrator access. Enter continue, Space skip: ")
+
+	var key [1]byte
+	for {
+		if _, err := os.Stdin.Read(key[:]); err != nil {
+			return false, fmt.Errorf("read clean prompt: %w", err)
+		}
+		switch key[0] {
+		case ' ', 'q', 'Q', 3:
+			fmt.Print("skip\r\n")
+			return false, nil
+		case '\r', '\n':
+			fmt.Print("continue\r\n")
+			return true, nil
+		}
+	}
 }
 
 type cleanPlanItem struct {
