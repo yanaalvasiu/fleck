@@ -252,7 +252,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return fmt.Errorf("nothing to do")
 	}
 	plan := makeCleanPlan(candidates)
-	printCleanPlan(plan, o.DryRun)
+	printCleanPlan(plan, o.DryRun, len(cfg.Whitelist))
 	if o.DryRun {
 		return nil
 	}
@@ -355,22 +355,32 @@ func directorySize(root string) int64 {
 	return total
 }
 
-func printCleanPlan(plan []cleanPlanItem, dryRun bool) {
+func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 	total := int64(0)
-	fmt.Println("Clean Your Mac")
-	fmt.Println("ⓘ Preview first. Confirm before anything is moved to Trash.")
-	if dryRun {
-		fmt.Println("ⓘ Dry run: no files will be changed.")
+	reset, title, muted, accent, green, yellow := "", "", "", "", "", ""
+	if os.Getenv("NO_COLOR") == "" {
+		reset = "\033[0m"
+		title = "\033[1;38;5;141m"
+		muted = "\033[38;5;245m"
+		accent = "\033[1;38;5;81m"
+		green = "\033[38;5;114m"
+		yellow = "\033[38;5;221m"
 	}
-	fmt.Println()
-	fmt.Printf("› User caches · %d items · %s\n", len(plan), formatBytes(sumPlanBytes(plan)))
+
+	fmt.Printf("%sClean Your Mac%s\n\n", title, reset)
+	fmt.Printf("%sⓘ Preview first. Confirm before anything is moved to Trash.%s\n", muted, reset)
+	if dryRun {
+		fmt.Printf("%sⓘ Dry run: no files will be changed.%s\n", muted, reset)
+	}
+	fmt.Printf("%s⚙%s User home | %sWhitelist: %d configured entries%s\n\n", muted, reset, muted, whitelistCount, reset)
+	fmt.Printf("%s➤ User caches%s\n", accent, reset)
 	for _, item := range plan {
 		total += item.Bytes
-		fmt.Printf("  • %-8s %s\n", formatBytes(item.Bytes), item.Path)
+		fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(item.Bytes), item.Path)
 	}
-	fmt.Printf("\nTotal reclaimable: %s\n", formatBytes(total))
+	fmt.Printf("\n%sTotal reclaimable: %s%s\n", yellow, formatBytes(total), reset)
 	if !dryRun {
-		fmt.Println("Administrator access, if needed, will be requested only after confirmation.")
+		fmt.Printf("%sAdministrator access, if needed, will be requested only after confirmation.%s\n", muted, reset)
 	}
 }
 
