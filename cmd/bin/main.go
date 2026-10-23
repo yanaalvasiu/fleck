@@ -14,14 +14,14 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/bin/internal/config"
-	"github.com/example/bin/internal/oplog"
-	"github.com/example/bin/internal/output"
-	"github.com/example/bin/internal/safety"
-	"github.com/example/bin/internal/trash"
+	"github.com/example/fleck/internal/config"
+	"github.com/example/fleck/internal/oplog"
+	"github.com/example/fleck/internal/output"
+	"github.com/example/fleck/internal/safety"
+	"github.com/example/fleck/internal/trash"
 )
 
-const binName = "<BIN>"
+const binName = "fleck"
 
 var version, commit, buildDate = "dev", "unknown", "unknown"
 
@@ -176,7 +176,7 @@ func moveToTrash(home string, p safety.Policy, path, module string, o output.Opt
 
 func updateCmd(o output.Options) error {
 	if !o.Yes {
-		fmt.Println("Latest releases are published at https://github.com/<GH_USER>/<BIN>/releases")
+		fmt.Println("Latest releases are published at https://github.com/<GH_USER>/fleck/releases")
 		fmt.Println("Homebrew install: brew upgrade " + binName)
 		return nil
 	}

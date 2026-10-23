@@ -17,8 +17,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/example/bin/internal/config"
-	"github.com/example/bin/internal/output"
+	"github.com/example/fleck/internal/config"
+	"github.com/example/fleck/internal/output"
 )
 
 type portRow struct {

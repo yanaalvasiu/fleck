@@ -18,4 +18,4 @@ checksum:
 release:
   github:
     owner: <GH_USER>
-    name: <BIN>
+    name: fleck
