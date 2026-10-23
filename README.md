@@ -14,6 +14,8 @@ The repository is intentionally created with `<GH_USER>` and `<BIN>` placeholder
 
 Every candidate is previewed before action. `--dry-run` prints the plan and exits; non-interactive use requires `--yes`. Items go to `~/.Trash`, never directly to permanent deletion. Paths are resolved immediately before acting, must be below configured roots, and are refused if protected, whitelisted, symlink-escaped, root, or the home directory itself. The process module refuses PID 1 and should be extended with macOS-specific guardrails before release.
 
+If Clean or Uninstall finds a selected item that is not user-writable, it prints the affected count and asks whether to continue with `sudo` or skip those items. Elevation is requested only for those specific items; dry-run and JSON modes never prompt.
+
 All tests use temporary directories and spawned fixtures. No telemetry is collected. The only intended network request is the GitHub Releases latest endpoint, cached for 24 hours and skipped in CI, JSON mode, non-TTY mode, or when disabled.
 
 ## Commands

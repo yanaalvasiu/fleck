@@ -214,6 +214,16 @@ func hashFile(p string) (string, error) {
 
 func uninstallCmd(args []string, o output.Options, home string, cfg config.Config) error {
 	fmt.Println("Uninstall discovery is allow-list based and excludes protected Apple apps.")
+	protectedRoots := []string{"/Applications", "/Library/Application Support", "/Library/Preferences"}
+	var protected []string
+	for _, root := range protectedRoots {
+		if _, err := os.Stat(root); err == nil && needsElevation(root) {
+			protected = append(protected, root)
+		}
+	}
+	if _, err := requestElevation("Uninstall", protected, o); err != nil {
+		return err
+	}
 	return nil
 }
 func cleanCmd(args []string, o output.Options, home string, cfg config.Config) error {
@@ -243,12 +253,27 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	if o.DryRun {
 		return nil
 	}
+	var protected []string
+	for _, x := range candidates {
+		if needsElevation(x) {
+			protected = append(protected, x)
+		}
+	}
+	elevated, err := requestElevation("Clean", protected, o)
+	if err != nil {
+		return err
+	}
 	if !confirm(o, "Move these known-safe cache/log items to Trash?") {
 		return fmt.Errorf("operation refused")
 	}
 	for _, x := range candidates {
 		if _, e := p.Validate(x); e == nil {
-			if e := moveToTrash(home, p, x, "clean", o); e != nil {
+			useSudo := elevated && needsElevation(x)
+			if !useSudo && needsElevation(x) {
+				fmt.Println("skip (requires sudo):", x)
+				continue
+			}
+			if e := moveToTrash(home, p, x, "clean", o, useSudo); e != nil {
 				return e
 			}
 		}

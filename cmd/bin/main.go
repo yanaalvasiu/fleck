@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/example/bin/internal/config"
@@ -128,7 +129,29 @@ func confirm(o output.Options, prompt string) bool {
 	_, _ = fmt.Scanln(&s)
 	return strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
 }
-func moveToTrash(home string, p safety.Policy, path, module string, o output.Options) error {
+func needsElevation(path string) bool {
+	return os.Geteuid() != 0 && syscall.Access(path, 2) != nil // POSIX W_OK
+}
+func requestElevation(module string, paths []string, o output.Options) (bool, error) {
+	if len(paths) == 0 || os.Geteuid() == 0 || o.DryRun || o.JSON {
+		return false, nil
+	}
+	fmt.Printf("%s: %d protected item(s) need administrator permission.\n", module, len(paths))
+	fmt.Println("Press Enter to continue with sudo, or type s and Enter to skip them.")
+	if o.Yes {
+		return true, nil
+	}
+	var answer string
+	if _, err := fmt.Scanln(&answer); err != nil && answer != "" {
+		return false, err
+	}
+	if strings.EqualFold(strings.TrimSpace(answer), "s") || strings.EqualFold(strings.TrimSpace(answer), "skip") {
+		fmt.Println("Skipped protected items.")
+		return false, nil
+	}
+	return true, nil
+}
+func moveToTrash(home string, p safety.Policy, path, module string, o output.Options, elevated bool) error {
 	resolved, err := p.Validate(path)
 	if err != nil {
 		return err
@@ -140,7 +163,12 @@ func moveToTrash(home string, p safety.Policy, path, module string, o output.Opt
 	if !confirm(o, "Move listed item(s) to Trash?") {
 		return fmt.Errorf("operation refused")
 	}
-	if err := trash.Move(resolved); err != nil {
+	if elevated {
+		err = trash.MoveWithSudo(resolved)
+	} else {
+		err = trash.Move(resolved)
+	}
+	if err != nil {
 		return err
 	}
 	return oplog.Append(home, binName, oplog.Entry{Action: "trash", Module: module, Path: resolved, Result: "ok"})

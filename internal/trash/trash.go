@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"time"
 )
@@ -12,6 +13,19 @@ import (
 // Move uses the Finder-compatible ~/.Trash directory. A rename preserves the
 // original item for Put Back and avoids invoking shell or AppleScript.
 func Move(path string) error {
+	return move(path, "")
+}
+
+// MoveWithSudo is used only after the caller has explicitly requested
+// elevation for a specific, already-validated path.
+func MoveWithSudo(path string) error {
+	if err := exec.Command("sudo", "-v").Run(); err != nil {
+		return fmt.Errorf("sudo authorization failed: %w", err)
+	}
+	return move(path, "sudo")
+}
+
+func move(path, elevated string) error {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return err
@@ -24,6 +38,13 @@ func Move(path string) error {
 	dest := filepath.Join(trashDir, base)
 	if _, err := os.Lstat(dest); err == nil {
 		dest = filepath.Join(trashDir, fmt.Sprintf("%s.%d", base, time.Now().UnixNano()))
+	}
+	if elevated == "sudo" {
+		if err := exec.Command("sudo", "mv", "--", path, dest).Run(); err == nil {
+			return nil
+		} else {
+			return fmt.Errorf("sudo move to Trash failed: %w", err)
+		}
 	}
 	if err := os.Rename(path, dest); err == nil {
 		return nil
