@@ -14,6 +14,8 @@ import (
 	"syscall"
 	"time"
 
+	"golang.org/x/term"
+
 	"github.com/yanaalvasiu/fleck/internal/config"
 	"github.com/yanaalvasiu/fleck/internal/oplog"
 	"github.com/yanaalvasiu/fleck/internal/output"
@@ -30,7 +32,9 @@ func main() {
 	cfg, _ := config.Load(home, binName)
 	if len(os.Args) == 1 {
 		if output.IsTTY() {
-			homeScreen(version)
+			if err := homeScreen(version, home, cfg); err != nil {
+				fail(1, err.Error())
+			}
 		} else {
 			help()
 		}
@@ -109,8 +113,146 @@ func historyCmd(home string, o output.Options) error {
 	}
 	return output.Print(e, o)
 }
-func homeScreen(v string) {
-	fmt.Printf("%s  %s\nA careful toolbox for your Mac.\n\n1  Clean\n2  Uninstall\n3  Duplicates\n4  Ports & Procs\n\nH history   S settings   U update   V version   Q quit\n", binName, v)
+func homeScreen(v, home string, cfg config.Config) error {
+	fd := int(os.Stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("enable interactive terminal: %w", err)
+	}
+	fmt.Print("\033[?25l")
+	defer func() {
+		_ = term.Restore(fd, state)
+		fmt.Print("\033[?25h")
+	}()
+
+	selected := 0
+	for {
+		fmt.Print("\033[H\033[2J")
+		fmt.Print(renderHome(v, selected, os.Getenv("NO_COLOR") == ""))
+
+		key, err := readHomeKey(os.Stdin)
+		if err != nil {
+			return fmt.Errorf("read menu input: %w", err)
+		}
+		switch key {
+		case homeKeyUp:
+			selected = (selected + 3) % 4
+		case homeKeyDown:
+			selected = (selected + 1) % 4
+		case homeKeyEnter:
+			command := []string{"clean", "uninstall", "duplicates", "ports"}[selected]
+			_ = term.Restore(fd, state)
+			fmt.Print("\033[H\033[2J")
+			if err := runHomeCommand(command, home, cfg); err != nil {
+				fmt.Fprintln(os.Stderr, err)
+			}
+			state, err = term.MakeRaw(fd)
+			if err != nil {
+				return fmt.Errorf("restore interactive terminal: %w", err)
+			}
+			fmt.Print("\nPress any key to return to Fleck.")
+			_, _ = readHomeKey(os.Stdin)
+		case homeKeyQuit:
+			return nil
+		}
+	}
+}
+
+type homeKey byte
+
+const (
+	homeKeyUp homeKey = iota + 1
+	homeKeyDown
+	homeKeyEnter
+	homeKeyQuit
+)
+
+func readHomeKey(r *os.File) (homeKey, error) {
+	var b [1]byte
+	if _, err := r.Read(b[:]); err != nil {
+		return 0, err
+	}
+	switch b[0] {
+	case 'q', 'Q', 3:
+		return homeKeyQuit, nil
+	case '\r', '\n':
+		return homeKeyEnter, nil
+	case 'j':
+		return homeKeyDown, nil
+	case 'k':
+		return homeKeyUp, nil
+	case 27:
+		var sequence [2]byte
+		if _, err := r.Read(sequence[:]); err != nil {
+			return 0, err
+		}
+		if sequence[0] != '[' {
+			return 0, nil
+		}
+		switch sequence[1] {
+		case 'A':
+			return homeKeyUp, nil
+		case 'B':
+			return homeKeyDown, nil
+		}
+	}
+	return 0, nil
+}
+
+func runHomeCommand(command, home string, cfg config.Config) error {
+	o := output.Options{}
+	switch command {
+	case "clean":
+		return cleanCmd(nil, o, home, cfg)
+	case "uninstall":
+		return uninstallCmd(nil, o, home, cfg)
+	case "duplicates":
+		return duplicateCmd(nil, o, home, cfg)
+	case "ports":
+		return portsCmd(nil, o)
+	default:
+		return fmt.Errorf("unknown menu command: %s", command)
+	}
+}
+
+func renderHome(v string, selected int, color bool) string {
+	reset := ""
+	muted := ""
+	accent := ""
+	green := ""
+	if color {
+		reset = "\033[0m"
+		muted = "\033[38;5;245m"
+		accent = "\033[38;5;81m"
+		green = "\033[38;5;114m"
+	}
+	row := func(index, number int, name, description string) string {
+		marker := "    "
+		start := ""
+		labelStyle := ""
+		if index == selected {
+			marker = "  ▸ "
+			labelStyle = accent
+			if color {
+				start = "\033[48;5;236m"
+			}
+		}
+		return fmt.Sprintf("%s%s%s%-2d  %-17s%s%s%s\n", start, labelStyle, marker, number, name, muted, description, reset)
+	}
+
+	return fmt.Sprintf("  %s%s%s  %s%s%s\n"+
+		"  %shttps://github.com/yanaalvasiu/fleck%s\n"+
+		"  %sA careful toolbox for your Mac.%s\n\n",
+		accent, binName, reset, muted, v, reset,
+		muted, reset,
+		green, reset,
+	) +
+		row(0, 1, "Clean", "Free up disk space") +
+		row(1, 2, "Uninstall", "Remove apps completely") +
+		row(2, 3, "Duplicates", "Find repeated files") +
+		row(3, 4, "Ports & Procs", "Inspect local processes") +
+		"\n" + fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\n",
+		muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
 }
 
 func newPolicy(home string, cfg config.Config) (safety.Policy, error) {
