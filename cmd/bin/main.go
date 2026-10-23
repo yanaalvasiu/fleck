@@ -100,7 +100,7 @@ func main() {
 }
 
 func help() {
-	fmt.Println(binName + " — a cautious macOS utility tool\n\nUsage:\n  " + binName + " [flags] <command>\n\nCommands:\n  clean        inspect known-safe caches and logs\n  uninstall    inspect applications and exact bundle leftovers\n  duplicates   find exact duplicate files\n  ports        list listening ports; ports free PORT stops its owner\n  procs        list or stop processes\n  history      show append-only operation history\n  update       show or apply a Homebrew update\n  version      show build and update information\n\nFlags: --json --yes --dry-run --debug --no-color")
+	fmt.Println(binName + " — a cautious macOS utility tool\n\nUsage:\n  " + binName + " [flags] <command>\n\nCommands:\n  clean        inspect known-safe user caches\n  uninstall    inspect applications and exact bundle leftovers\n  duplicates   find exact duplicate files\n  ports        list listening ports; ports free PORT stops its owner\n  procs        list or stop processes\n  history      show append-only operation history\n  update       show or apply a Homebrew update\n  version      show build and update information\n\nFlags: --json --yes --dry-run --debug --no-color")
 }
 func fail(code int, msg string) { fmt.Fprintln(os.Stderr, msg); os.Exit(code) }
 func versionCmd(o output.Options) {

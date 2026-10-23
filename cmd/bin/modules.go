@@ -231,15 +231,9 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	if err != nil {
 		return err
 	}
-	roots := []string{filepath.Join(home, "Library", "Caches"), filepath.Join(home, "Library", "Logs")}
-	var candidates []string
-	for _, r := range roots {
-		filepath.WalkDir(r, func(path string, d fs.DirEntry, e error) error {
-			if e == nil && path != r {
-				candidates = append(candidates, path)
-			}
-			return nil
-		})
+	candidates, err := safeCleanCandidates(home)
+	if err != nil {
+		return err
 	}
 	if o.JSON {
 		return output.Print(map[string]any{"items": candidates, "count": len(candidates)}, o)
@@ -253,6 +247,9 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	if o.DryRun {
 		return nil
 	}
+	if !confirm(o, "Move these known-safe cache containers to Trash?") {
+		return fmt.Errorf("operation refused")
+	}
 	var protected []string
 	for _, x := range candidates {
 		if needsElevation(x) {
@@ -262,9 +259,6 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	elevated, err := requestElevation("Clean", protected, o)
 	if err != nil {
 		return err
-	}
-	if !confirm(o, "Move these known-safe cache/log items to Trash?") {
-		return fmt.Errorf("operation refused")
 	}
 	for _, x := range candidates {
 		if _, e := p.Validate(x); e == nil {
@@ -279,6 +273,30 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		}
 	}
 	return nil
+}
+
+// safeCleanCandidates deliberately plans only top-level cache containers.
+// Recursing through Library/Logs would surface unrelated application logs and
+// active developer-tool data, which is not an allow-list decision Fleck can
+// prove safe. A future category-specific scan can add explicit log paths.
+func safeCleanCandidates(home string) ([]string, error) {
+	cacheRoot := filepath.Join(home, "Library", "Caches")
+	entries, err := os.ReadDir(cacheRoot)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("read user cache directory: %w", err)
+	}
+
+	candidates := make([]string, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		candidates = append(candidates, filepath.Join(cacheRoot, entry.Name()))
+	}
+	return candidates, nil
 }
 
 var _ = time.Now
