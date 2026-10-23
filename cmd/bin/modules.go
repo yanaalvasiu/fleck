@@ -301,7 +301,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 				fmt.Println("skip (requires sudo):", x)
 				continue
 			}
-			if e := moveToTrash(home, p, x, "clean", o, useSudo); e != nil {
+			if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
 				return e
 			}
 		}
@@ -444,7 +444,7 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 		for _, group := range groupCleanItems(items) {
 			total += group.Bytes
 			if group.Count > 1 {
-				fmt.Printf("  %s✓%s %-24s · %d items · %s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes))
+				fmt.Printf("  %s✓%s %s · %d items · %s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes))
 			} else {
 				fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(group.Bytes), group.Name)
 			}

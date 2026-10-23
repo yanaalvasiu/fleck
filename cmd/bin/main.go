@@ -306,6 +306,10 @@ func requestElevation(module string, paths []string, o output.Options) (bool, er
 	return true, nil
 }
 func moveToTrash(home string, p safety.Policy, path, module string, o output.Options, elevated bool) error {
+	return moveToTrashInternal(home, p, path, module, o, elevated, true)
+}
+
+func moveToTrashInternal(home string, p safety.Policy, path, module string, o output.Options, elevated, askConfirmation bool) error {
 	resolved, err := p.Validate(path)
 	if err != nil {
 		return err
@@ -314,7 +318,7 @@ func moveToTrash(home string, p safety.Policy, path, module string, o output.Opt
 		fmt.Println("would move to Trash:", resolved)
 		return nil
 	}
-	if !confirm(o, "Move listed item(s) to Trash?") {
+	if askConfirmation && !confirm(o, "Move listed item(s) to Trash?") {
 		return fmt.Errorf("operation refused")
 	}
 	if elevated {
