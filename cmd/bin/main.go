@@ -237,12 +237,12 @@ func renderHome(v string, selected int, color bool) string {
 				start = "\033[48;5;236m"
 			}
 		}
-		return fmt.Sprintf("%s%s%s%-2d  %-17s%s%s%s\n", start, labelStyle, marker, number, name, muted, description, reset)
+		return fmt.Sprintf("%s%s%s%-2d  %-17s%s%s%s\r\n", start, labelStyle, marker, number, name, muted, description, reset)
 	}
 
-	return fmt.Sprintf("  %s%s%s  %s%s%s\n"+
-		"  %shttps://github.com/yanaalvasiu/fleck%s\n"+
-		"  %sA careful toolbox for your Mac.%s\n\n",
+	return fmt.Sprintf("  %s%s%s  %s%s%s\r\n"+
+		"  %shttps://github.com/yanaalvasiu/fleck%s\r\n"+
+		"  %sA careful toolbox for your Mac.%s\r\n\r\n",
 		accent, binName, reset, muted, v, reset,
 		muted, reset,
 		green, reset,
@@ -251,7 +251,7 @@ func renderHome(v string, selected int, color bool) string {
 		row(1, 2, "Uninstall", "Remove apps completely") +
 		row(2, 3, "Duplicates", "Find repeated files") +
 		row(3, 4, "Ports & Procs", "Inspect local processes") +
-		"\n" + fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\n",
+		"\r\n" + fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\r\n",
 		muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
 }
 
