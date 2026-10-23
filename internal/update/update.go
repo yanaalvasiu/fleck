@@ -66,7 +66,7 @@ func Fetch(url, current string, client *http.Client) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	var rel release
 	if err := json.NewDecoder(r.Body).Decode(&rel); err != nil {
 		return Result{}, err

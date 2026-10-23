@@ -26,7 +26,7 @@ func Append(home, bin string, entry Entry) error {
 	if err != nil {
 		return err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	if entry.Time.IsZero() {
 		entry.Time = time.Now()
 	}
@@ -46,7 +46,7 @@ func Read(home, bin string) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 	var out []Entry
 	s := bufio.NewScanner(f)
 	for s.Scan() {

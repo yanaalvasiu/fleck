@@ -16,7 +16,7 @@ func TestCompare(t *testing.T) {
 func TestFetchAndCache(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(`{"tag_name":"v2.0.0","html_url":"https://example.test/release"}`))
+		_, _ = w.Write([]byte(`{"tag_name":"v2.0.0","html_url":"https://example.test/release"}`))
 	}))
 	defer s.Close()
 	got, err := Fetch(s.URL, "1.0.0", &http.Client{Timeout: time.Second})

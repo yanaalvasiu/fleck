@@ -2,17 +2,13 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"syscall"
-	"time"
 
 	"golang.org/x/term"
 
@@ -305,10 +301,6 @@ func requestElevation(module string, paths []string, o output.Options) (bool, er
 	}
 	return true, nil
 }
-func moveToTrash(home string, p safety.Policy, path, module string, o output.Options, elevated bool) error {
-	return moveToTrashInternal(home, p, path, module, o, elevated, true)
-}
-
 func moveToTrashInternal(home string, p safety.Policy, path, module string, o output.Options, elevated, askConfirmation bool) error {
 	resolved, err := p.Validate(path)
 	if err != nil {
@@ -342,9 +334,3 @@ func updateCmd(o output.Options) error {
 	fmt.Println(cmd)
 	return nil
 }
-
-func _json(v any) string { b, _ := json.Marshal(v); return string(b) }
-
-var _ = http.MethodGet
-var _ = strconv.Itoa
-var _ = time.Now
