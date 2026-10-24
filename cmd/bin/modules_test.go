@@ -2,8 +2,13 @@
 package main
 
 import (
+	"image"
+	"image/color"
+	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -161,5 +166,103 @@ func TestDuplicateTrashKeepsOneCopy(t *testing.T) {
 	}
 	if _, err := os.Stat(filepath.Join(home, ".Trash", "b.txt")); err != nil {
 		t.Fatalf("duplicate is not in Trash: %v", err)
+	}
+}
+
+func TestPerceptualHashGroupsSimilarPNGImages(t *testing.T) {
+	root := t.TempDir()
+	for i, shade := range []uint8{80, 82} {
+		img := image.NewRGBA(image.Rect(0, 0, 16, 16))
+		for y := 0; y < 16; y++ {
+			for x := 0; x < 16; x++ {
+				img.Set(x, y, color.RGBA{shade, shade, shade, 255})
+			}
+		}
+		f, err := os.Create(filepath.Join(root, string(rune('a'+i))+".png"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := png.Encode(f, img); err != nil {
+			t.Fatal(err)
+		}
+		_ = f.Close()
+	}
+	groups, err := findSimilarImages(root, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || len(groups[0].Paths) != 2 {
+		t.Fatalf("similar groups = %#v", groups)
+	}
+}
+
+func TestDiscoverCaskAppsFromFakeBrew(t *testing.T) {
+	dir := t.TempDir()
+	brew := filepath.Join(dir, "brew")
+	if err := os.WriteFile(brew, []byte("#!/bin/sh\nprintf 'demo-cask\\n'\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	apps := discoverCaskApps()
+	if len(apps) != 1 || !apps[0].Cask || apps[0].CaskName != "demo-cask" {
+		t.Fatalf("casks = %#v", apps)
+	}
+}
+
+func TestUnloadLaunchAgentUsesLaunchctl(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "called")
+	launchctl := filepath.Join(dir, "launchctl")
+	script := "#!/bin/sh\nprintf '%s' \"$*\" > \"" + marker + "\"\n"
+	if err := os.WriteFile(launchctl, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+":"+os.Getenv("PATH"))
+	plist := filepath.Join(t.TempDir(), "com.example.demo.plist")
+	if err := os.WriteFile(plist, []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := unloadLaunchAgent(plist); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(marker)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "bootout gui/") || !strings.Contains(string(b), plist) {
+		t.Fatalf("launchctl args = %q", b)
+	}
+}
+
+func TestCloneDuplicateKeepsTargetAndUsesCloneMode(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("APFS clone mode is macOS-only")
+	}
+	home := t.TempDir()
+	root := filepath.Join(home, "Library", "Caches", "Fixture")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	source := filepath.Join(root, "source.txt")
+	target := filepath.Join(root, "target.txt")
+	if err := os.WriteFile(source, []byte("clone fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(target, []byte("old"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	p, err := safety.NewPolicy(home, []string{filepath.Join(home, "Library")}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cloneDuplicate(source, target, p, output.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	b, err := os.ReadFile(target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != "clone fixture" {
+		t.Fatalf("target = %q", b)
 	}
 }

@@ -119,7 +119,7 @@ func commandHelp(command string) {
 	case "uninstall":
 		fmt.Println("Usage: fleck uninstall [--orphans] [--dry-run] [--yes] [--json]")
 	case "duplicates":
-		fmt.Println("Usage: fleck duplicates [PATH] [--trash] [--dry-run] [--yes] [--json]")
+		fmt.Println("Usage: fleck duplicates [PATH] [--trash|--clone|--similar] [--threshold=N] [--dry-run] [--yes] [--json]")
 	case "ports":
 		fmt.Println("Usage: fleck ports [PORT] [--udp] | fleck ports free PORT [--group] [--yes]")
 	case "procs":
@@ -262,6 +262,7 @@ const (
 	homeKeyUpdate
 	homeKeyVersion
 	homeKeyRefresh
+	homeKeySpace
 )
 
 func readHomeKey(r *os.File) (homeKey, error) {
@@ -284,6 +285,8 @@ func readHomeKey(r *os.File) (homeKey, error) {
 		return homeKeyRefresh, nil
 	case '\r', '\n':
 		return homeKeyEnter, nil
+	case ' ':
+		return homeKeySpace, nil
 	case 'j':
 		return homeKeyDown, nil
 	case 'k':
@@ -378,16 +381,8 @@ func portsAndProcsPanel() error {
 }
 
 func renderHome(v string, selected int, color bool) string {
-	reset := ""
-	muted := ""
-	accent := ""
-	green := ""
-	if color {
-		reset = "\033[0m"
-		muted = "\033[38;5;245m"
-		accent = "\033[38;5;81m"
-		green = "\033[38;5;114m"
-	}
+	theme := currentTheme(color)
+	reset, muted, accent, green := theme.Reset, theme.Muted, theme.Primary, theme.Success
 	row := func(index, number int, name, description string) string {
 		marker := "    "
 		start := ""
@@ -396,7 +391,7 @@ func renderHome(v string, selected int, color bool) string {
 			marker = "  ▸ "
 			labelStyle = accent
 			if color {
-				start = "\033[48;5;236m"
+				start = "\033[48;5;17m"
 			}
 		}
 		return fmt.Sprintf("%s%s%s%-2d  %-17s%s%s%s\r\n", start, labelStyle, marker, number, name, muted, description, reset)

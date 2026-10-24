@@ -8,10 +8,16 @@ import (
 	"encoding/hex"
 	"encoding/xml"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
 	"io/fs"
+	"math/bits"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strconv"
 	"strings"
@@ -23,6 +29,7 @@ import (
 	"github.com/yanaalvasiu/fleck/internal/oplog"
 	"github.com/yanaalvasiu/fleck/internal/output"
 	"github.com/yanaalvasiu/fleck/internal/safety"
+	_ "golang.org/x/image/webp"
 	"golang.org/x/term"
 )
 
@@ -389,13 +396,42 @@ type dupGroup struct {
 func duplicateCmd(args []string, o output.Options, home string, cfg config.Config) error {
 	root := home
 	trashAction := false
+	cloneAction := false
+	similarAction := false
+	threshold := 8
 	for _, arg := range args {
 		switch {
 		case arg == "--trash":
 			trashAction = true
+		case arg == "--clone":
+			cloneAction = true
+		case arg == "--similar":
+			similarAction = true
+		case strings.HasPrefix(arg, "--threshold="):
+			threshold, _ = strconv.Atoi(strings.TrimPrefix(arg, "--threshold="))
 		case !strings.HasPrefix(arg, "--"):
 			root = arg
 		}
+	}
+	if similarAction {
+		groups, err := findSimilarImages(root, threshold)
+		if err != nil {
+			return err
+		}
+		if o.JSON {
+			return output.Print(groups, o)
+		}
+		for _, group := range groups {
+			fmt.Printf("similar images · %d files · distance ≤ %d\n", len(group.Paths), group.Distance)
+			for _, p := range group.Paths {
+				fmt.Println("  ", p)
+			}
+		}
+		if len(groups) == 0 {
+			return fmt.Errorf("no similar image groups found")
+		}
+		fmt.Println("Similar images are never selected automatically; review them before taking action.")
+		return nil
 	}
 	if absolute, err := filepath.Abs(root); err == nil {
 		root = filepath.Clean(absolute)
@@ -410,7 +446,7 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 	if err != nil {
 		return err
 	}
-	if !trashAction {
+	if !trashAction && !cloneAction {
 		return output.Print(groups, o)
 	}
 	rel, err := filepath.Rel(home, root)
@@ -418,7 +454,11 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 		return fmt.Errorf("duplicate actions are limited to the current home directory")
 	}
 	if o.JSON {
-		return output.Print(map[string]any{"groups": groups, "action": "trash", "dry_run": o.DryRun}, o)
+		action := "trash"
+		if cloneAction {
+			action = "clone"
+		}
+		return output.Print(map[string]any{"groups": groups, "action": action, "dry_run": o.DryRun}, o)
 	}
 	if len(groups) == 0 {
 		return fmt.Errorf("nothing to do")
@@ -427,13 +467,21 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 		keeper, remove := duplicateKeeper(group.Paths)
 		fmt.Printf("keep: %s\n", keeper)
 		for _, path := range remove {
-			fmt.Printf("move: %s\n", path)
+			if cloneAction {
+				fmt.Printf("clone: %s ← %s\n", path, keeper)
+			} else {
+				fmt.Printf("move: %s\n", path)
+			}
 		}
 	}
 	if o.DryRun {
 		return nil
 	}
-	if !confirm(o, "Move duplicate copies to Trash?") {
+	prompt := "Move duplicate copies to Trash?"
+	if cloneAction {
+		prompt = "Replace duplicate copies with APFS clones?"
+	}
+	if !confirm(o, prompt) {
 		return fmt.Errorf("operation refused")
 	}
 	p, err := newPolicy(home, cfg)
@@ -442,17 +490,151 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 	}
 	moved := 0
 	for _, group := range groups {
-		_, remove := duplicateKeeper(group.Paths)
+		keeper, remove := duplicateKeeper(group.Paths)
 		for _, path := range remove {
-			if err := moveToTrashInternal(home, p, path, "duplicates", o, needsElevation(path), false); err != nil {
-				fmt.Printf("failed: %s (%v)\n", path, err)
+			var actionErr error
+			if cloneAction {
+				actionErr = cloneDuplicate(keeper, path, p, o)
+			} else {
+				actionErr = moveToTrashInternal(home, p, path, "duplicates", o, needsElevation(path), false)
+			}
+			if actionErr != nil {
+				fmt.Printf("failed: %s (%v)\n", path, actionErr)
 				continue
 			}
 			moved++
 		}
 	}
-	fmt.Printf("Moved %d duplicate item(s) to Trash.\n", moved)
+	if cloneAction {
+		fmt.Printf("Created %d APFS clone(s).\n", moved)
+	} else {
+		fmt.Printf("Moved %d duplicate item(s) to Trash.\n", moved)
+	}
 	return nil
+}
+
+func cloneDuplicate(source, target string, p safety.Policy, o output.Options) error {
+	if _, err := p.Validate(source); err != nil {
+		return fmt.Errorf("keeper refused: %w", err)
+	}
+	resolved, err := p.Validate(target)
+	if err != nil {
+		return err
+	}
+	if o.DryRun {
+		fmt.Println("would create APFS clone:", resolved)
+		return nil
+	}
+	if runtime.GOOS != "darwin" {
+		return fmt.Errorf("APFS clone mode is only available on macOS")
+	}
+	// macOS cp -c requests clonefile(2) without cgo; the target is revalidated above.
+	if out, err := exec.Command("/bin/cp", "-c", source, resolved).CombinedOutput(); err != nil {
+		return fmt.Errorf("clonefile: %v: %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+type similarGroup struct {
+	Distance int      `json:"distance"`
+	Paths    []string `json:"paths"`
+}
+
+func findSimilarImages(root string, threshold int) ([]similarGroup, error) {
+	type imageHash struct {
+		path string
+		hash uint64
+	}
+	var images []imageHash
+	err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return nil
+		}
+		if entry.IsDir() {
+			if path != root && skipDuplicateDirectory(entry.Name()) {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		ext := strings.ToLower(filepath.Ext(path))
+		if ext == ".heic" {
+			return nil
+		}
+		if ext != ".jpg" && ext != ".jpeg" && ext != ".png" && ext != ".gif" && ext != ".webp" {
+			return nil
+		}
+		h, err := perceptualHash(path)
+		if err == nil {
+			images = append(images, imageHash{path, h})
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	var groups []similarGroup
+	used := make([]bool, len(images))
+	for i := range images {
+		if used[i] {
+			continue
+		}
+		paths := []string{images[i].path}
+		used[i] = true
+		maxDistance := 0
+		for j := i + 1; j < len(images); j++ {
+			if used[j] {
+				continue
+			}
+			d := bits.OnesCount64(images[i].hash ^ images[j].hash)
+			if d <= threshold {
+				used[j] = true
+				paths = append(paths, images[j].path)
+				if d > maxDistance {
+					maxDistance = d
+				}
+			}
+		}
+		if len(paths) > 1 {
+			groups = append(groups, similarGroup{maxDistance, paths})
+		}
+	}
+	return groups, nil
+}
+
+func perceptualHash(path string) (uint64, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = f.Close() }()
+	img, _, err := image.Decode(f)
+	if err != nil {
+		return 0, err
+	}
+	gray := image.NewGray(image.Rect(0, 0, 8, 8))
+	var total uint64
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			sx := img.Bounds().Min.X + x*img.Bounds().Dx()/8
+			sy := img.Bounds().Min.Y + y*img.Bounds().Dy()/8
+			c := img.At(sx, sy)
+			gray.Set(x, y, c)
+			total += uint64(gray.GrayAt(x, y).Y)
+		}
+	}
+	avg := total / 64
+	var hash uint64
+	for y := 0; y < 8; y++ {
+		for x := 0; x < 8; x++ {
+			if gray.GrayAt(x, y).Y >= uint8(avg) {
+				hash |= uint64(1) << uint(y*8+x)
+			}
+		}
+	}
+	return hash, nil
 }
 
 func duplicateKeeper(paths []string) (string, []string) {
@@ -548,15 +730,30 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 	if len(apps) == 0 {
 		return fmt.Errorf("no removable applications found")
 	}
+	if output.IsTTY() && !o.JSON && !o.DryRun {
+		apps, err = selectUninstallApps(apps)
+		if err != nil {
+			return err
+		}
+		if len(apps) == 0 {
+			return fmt.Errorf("no applications selected")
+		}
+	}
 	items := make([]uninstallItem, 0)
 	for _, app := range apps {
-		items = append(items, uninstallItem{Path: app.Path, Name: app.Name, BundleID: app.BundleID, Kind: "application"})
+		if !app.Cask {
+			items = append(items, uninstallItem{Path: app.Path, Name: app.Name, BundleID: app.BundleID, Kind: "application"})
+		}
 		for _, leftover := range appLeftovers(home, app.BundleID) {
-			items = append(items, uninstallItem{Path: leftover, Name: filepath.Base(leftover), BundleID: app.BundleID, Kind: "leftover"})
+			kind := "leftover"
+			if filepath.Dir(leftover) == filepath.Join(home, "Library", "LaunchAgents") {
+				kind = "launch-agent"
+			}
+			items = append(items, uninstallItem{Path: leftover, Name: filepath.Base(leftover), BundleID: app.BundleID, Kind: kind})
 		}
 	}
 	if o.JSON {
-		return output.Print(items, o)
+		return output.Print(map[string]any{"apps": apps, "items": items}, o)
 	}
 	for _, item := range items {
 		fmt.Printf("  %s · %s\n", item.Kind, item.Path)
@@ -578,12 +775,25 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 		return err
 	}
 	for _, item := range items {
+		if item.Kind == "launch-agent" {
+			if err := unloadLaunchAgent(item.Path); err != nil {
+				fmt.Printf("skipped launch agent %s: %v\n", item.Path, err)
+				continue
+			}
+		}
 		elevated := needsElevation(item.Path)
 		if err := moveToTrashInternal(home, p, item.Path, "uninstall", o, elevated, false); err != nil {
 			fmt.Printf("failed: %s (%v)\n", item.Path, err)
 			continue
 		}
 		fmt.Println("moved:", item.Path)
+	}
+	for _, app := range apps {
+		if app.Cask {
+			if err := uninstallCask(app.CaskName, o); err != nil {
+				fmt.Printf("cask %s: %v\n", app.CaskName, err)
+			}
+		}
 	}
 	return nil
 }
@@ -599,10 +809,115 @@ type appInfo struct {
 	Path     string
 	Name     string
 	BundleID string
+	Cask     bool   `json:"cask,omitempty"`
+	CaskName string `json:"cask_name,omitempty"`
 }
 
 func discoverApps(home string) ([]appInfo, error) {
-	return discoverAppsInRoots([]string{"/Applications", filepath.Join(home, "Applications")})
+	apps, err := discoverAppsInRoots([]string{"/Applications", filepath.Join(home, "Applications")})
+	if err != nil {
+		return nil, err
+	}
+	return append(apps, discoverCaskApps()...), nil
+}
+
+func discoverCaskApps() []appInfo {
+	if _, err := exec.LookPath("brew"); err != nil {
+		return nil
+	}
+	out, err := exec.Command("brew", "list", "--cask").Output()
+	if err != nil {
+		return nil
+	}
+	var apps []appInfo
+	for _, line := range strings.Split(string(out), "\n") {
+		name := strings.TrimSpace(line)
+		if name != "" {
+			apps = append(apps, appInfo{Name: name, Cask: true, CaskName: name})
+		}
+	}
+	return apps
+}
+
+func selectUninstallApps(apps []appInfo) ([]appInfo, error) {
+	fd := int(os.Stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = term.Restore(fd, state); fmt.Print("\033[?25h\n") }()
+	selected := make([]bool, len(apps))
+	cursor := 0
+	for {
+		fmt.Print("\033[H\033[2J\033[?25l")
+		fmt.Println("Uninstall · select applications")
+		fmt.Println("  ↑↓ move   Space select   Enter continue   Q cancel")
+		fmt.Println()
+		for i, app := range apps {
+			mark := "·"
+			if selected[i] {
+				mark = "✓"
+			}
+			pointer := "  "
+			if i == cursor {
+				pointer = "▸ "
+			}
+			label := app.Name
+			if app.Cask {
+				label += " (Homebrew cask)"
+			}
+			fmt.Printf("%s%s %s\n", pointer, mark, label)
+		}
+		key, err := readHomeKey(os.Stdin)
+		if err != nil {
+			return nil, err
+		}
+		switch key {
+		case homeKeyUp:
+			cursor = (cursor + len(apps) - 1) % len(apps)
+		case homeKeyDown:
+			cursor = (cursor + 1) % len(apps)
+		case homeKeySpace:
+			selected[cursor] = !selected[cursor]
+		case homeKeyEnter:
+			var out []appInfo
+			for i, app := range apps {
+				if selected[i] {
+					out = append(out, app)
+				}
+			}
+			return out, nil
+		case homeKeyQuit:
+			return nil, nil
+		}
+	}
+}
+
+func uninstallCask(name string, o output.Options) error {
+	if name == "" {
+		return nil
+	}
+	if o.DryRun {
+		fmt.Println("would run: brew uninstall --cask", name)
+		return nil
+	}
+	if !o.Yes && !confirm(o, "Uninstall Homebrew cask "+name+"?") {
+		return fmt.Errorf("operation refused")
+	}
+	cmd := exec.Command("brew", "uninstall", "--cask", name)
+	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
+	return cmd.Run()
+}
+
+func unloadLaunchAgent(path string) error {
+	if _, err := os.Stat(path); err != nil {
+		return err
+	}
+	uid := strconv.Itoa(os.Getuid())
+	if err := exec.Command("launchctl", "bootout", "gui/"+uid, path).Run(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func discoverAppsInRoots(roots []string) ([]appInfo, error) {
@@ -868,10 +1183,8 @@ func printCleanupSummary(trackedBytes int64, moved int, freeBefore, freeAfter in
 }
 
 func cleanColors() (reset, muted, green, yellow, cyan, red string) {
-	if os.Getenv("NO_COLOR") != "" || !output.IsTTY() {
-		return "", "", "", "", "", ""
-	}
-	return "\033[0m", "\033[38;5;245m", "\033[38;5;114m", "\033[38;5;221m", "\033[38;5;81m", "\033[38;5;203m"
+	t := currentTheme(output.IsTTY())
+	return t.Reset, t.Muted, t.Success, t.Warning, t.Primary, t.Danger
 }
 
 func printCleanDeleteProgress(done, total int, current string) {
@@ -912,14 +1225,8 @@ func cleanIntro() (bool, error) {
 	}
 	defer func() { _ = term.Restore(fd, state) }()
 
-	reset, title, muted, accent, keyStyle := "", "", "", "", ""
-	if os.Getenv("NO_COLOR") == "" && output.IsTTY() {
-		reset = "\033[0m"
-		title = "\033[1;38;5;141m"
-		muted = "\033[38;5;245m"
-		accent = "\033[38;5;81m"
-		keyStyle = "\033[1;38;5;117m"
-	}
+	t := currentTheme(output.IsTTY())
+	reset, title, muted, accent, keyStyle := t.Reset, t.Accent, t.Muted, t.Primary, t.Warning
 
 	fmt.Print("\033[H\033[2J")
 	fmt.Printf("  %sClean Your Mac%s\r\n\r\n", title, reset)

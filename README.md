@@ -23,7 +23,7 @@ All tests use temporary directories and spawned fixtures. No telemetry is collec
 ```text
 fleck clean [--dry-run] [--yes] [--json]
 fleck uninstall [--orphans] [--dry-run] [--yes] [--json]
-fleck duplicates [PATH] [--trash] [--dry-run] [--yes] [--json]
+fleck duplicates [PATH] [--trash|--clone|--similar] [--threshold=N] [--dry-run] [--yes] [--json]
 fleck ports [PORT] [--udp]
 fleck ports free PORT [--group] [--yes]
 fleck procs [SEARCH] [--watch]
@@ -34,7 +34,9 @@ fleck version
 fleck doctor [--json]
 ```
 
-The current implementation uses the Go standard library plus `x/term` to minimize attack surface and avoid cgo. Cobra, Bubble Tea, gopsutil, BLAKE3, image hashing, and SQLite are deliberately not runtime dependencies until their macOS behavior is covered by fixtures. If introduced, pin versions and verify their licenses in CI. Shell completion and perceptual-image matching remain planned work.
+The implementation uses the Go standard library plus `x/term` and the pure-Go `x/image/webp` decoder to minimize attack surface and avoid cgo. The image similarity matcher supports JPEG, PNG, GIF, and WebP; HEIC is reported as unsupported rather than converted implicitly. APFS clone mode delegates to macOS `/bin/cp -c`, which requests the native `clonefile` operation. Homebrew cask removal intentionally remains a package-manager operation after explicit confirmation; it is not silently invoked.
+
+`fleck uninstall` opens a raw-terminal multi-select app picker on a TTY. It can also discover installed Homebrew casks, unload matching per-user launch agents with `launchctl bootout`, and move application leftovers to Finder-compatible Trash. `fleck duplicates --similar` reports perceptually similar JPEG/PNG/GIF groups for manual review; similar images are never auto-selected. `--clone` replaces selected duplicate files with APFS clones and never calls a delete operation.
 
 ## Development
 
