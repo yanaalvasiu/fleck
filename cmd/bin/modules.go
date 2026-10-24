@@ -791,28 +791,29 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	}
 	moved, skipped, failed := 0, 0, 0
 	trackedBytes := int64(0)
-	for _, x := range candidates {
+	for index, x := range candidates {
 		if _, e := p.Validate(x); e != nil {
-			fmt.Printf("  ◎ skipped · %s (%v)\n", filepath.Base(x), e)
 			skipped++
+			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
 			continue
 		}
 		useSudo := elevated && needsElevation(x)
 		if !useSudo && needsElevation(x) {
-			fmt.Printf("  ◎ skipped · %s (requires administrator permission)\n", filepath.Base(x))
 			skipped++
+			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
 			continue
 		}
 		bytes := directorySize(x)
 		if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
-			fmt.Printf("  ✗ failed · %s (%v)\n", filepath.Base(x), e)
 			failed++
+			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
 			continue
 		}
 		trackedBytes += bytes
-		fmt.Printf("  ✓ moved to Trash · %s · %s\n", filepath.Base(x), formatBytes(bytes))
 		moved++
+		printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
 	}
+	finishCleanDeleteProgress()
 	freeAfter, _ := freeSpaceBytes(home)
 	printCleanupSummary(trackedBytes, moved, freeBefore, freeAfter, skipped, failed)
 	if failed > 0 {
@@ -846,19 +847,54 @@ func freeSpaceBytes(path string) (int64, error) {
 
 func printCleanupSummary(trackedBytes int64, moved int, freeBefore, freeAfter int64, skipped, failed int) {
 	separator := strings.Repeat("=", 70)
-	fmt.Println(separator)
-	fmt.Printf("Cleanup complete\n")
-	fmt.Printf("Tracked cleanup: %s | Items cleaned: %d\n", formatBytes(trackedBytes), moved)
+	reset, muted, green, yellow, cyan, red := cleanColors()
+	fmt.Printf("%s%s%s\n", muted, separator, reset)
+	fmt.Printf("%sCleanup complete%s\n", green, reset)
+	fmt.Printf("%sTracked cleanup: %s%s | %sItems cleaned: %d%s\n", yellow, formatBytes(trackedBytes), reset, cyan, moved, reset)
 	if freeBefore > 0 && freeAfter > 0 {
 		delta := freeAfter - freeBefore
-		fmt.Printf("Free space: %s (%s)\n", formatBytes(freeAfter), signedBytes(delta))
+		deltaColor := green
+		if delta < 0 {
+			deltaColor = red
+		}
+		fmt.Printf("%sFree space: %s (%s%s%s)%s\n", cyan, formatBytes(freeAfter), deltaColor, signedBytes(delta), reset, reset)
 	} else {
-		fmt.Println("Free space: unavailable")
+		fmt.Printf("%sFree space: unavailable%s\n", cyan, reset)
 	}
 	if skipped > 0 || failed > 0 {
-		fmt.Printf("Skipped: %d | Failed: %d\n", skipped, failed)
+		fmt.Printf("%sSkipped: %d%s | %sFailed: %d%s\n", muted, skipped, reset, red, failed, reset)
 	}
-	fmt.Println(separator)
+	fmt.Printf("%s%s%s\n", muted, separator, reset)
+}
+
+func cleanColors() (reset, muted, green, yellow, cyan, red string) {
+	if os.Getenv("NO_COLOR") != "" || !output.IsTTY() {
+		return "", "", "", "", "", ""
+	}
+	return "\033[0m", "\033[38;5;245m", "\033[38;5;114m", "\033[38;5;221m", "\033[38;5;81m", "\033[38;5;203m"
+}
+
+func printCleanDeleteProgress(done, total int, current string) {
+	if !output.IsTTY() {
+		return
+	}
+	reset, muted, green, yellow, _, _ := cleanColors()
+	width := 28
+	filled := 0
+	if total > 0 {
+		filled = done * width / total
+	}
+	if filled > width {
+		filled = width
+	}
+	bar := strings.Repeat("█", filled) + strings.Repeat("·", width-filled)
+	fmt.Printf("\r\033[2K%sDeleting%s %-24s %s[%s%s%s] %d/%d", muted, reset, truncateText(current, 24), yellow, green, bar, yellow, done, total)
+}
+
+func finishCleanDeleteProgress() {
+	if output.IsTTY() {
+		fmt.Println()
+	}
 }
 
 func signedBytes(bytes int64) string {
