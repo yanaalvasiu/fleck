@@ -242,6 +242,8 @@ func homeScreen(v, home string, cfg config.Config) error {
 			showHomePanel("Update", func() error { return updateCmd(output.Options{}) })
 		case homeKeyVersion:
 			showHomePanel("Version", func() error { versionCmd(output.Options{}); return nil })
+		case homeKeyRefresh:
+			// Refresh is handled by the module panel; keep it as a no-op on home.
 		case homeKeyQuit:
 			return nil
 		}
@@ -259,6 +261,7 @@ const (
 	homeKeySettings
 	homeKeyUpdate
 	homeKeyVersion
+	homeKeyRefresh
 )
 
 func readHomeKey(r *os.File) (homeKey, error) {
@@ -277,6 +280,8 @@ func readHomeKey(r *os.File) (homeKey, error) {
 		return homeKeyUpdate, nil
 	case 'v', 'V':
 		return homeKeyVersion, nil
+	case 'r', 'R':
+		return homeKeyRefresh, nil
 	case '\r', '\n':
 		return homeKeyEnter, nil
 	case 'j':
@@ -321,9 +326,54 @@ func runHomeCommand(command, home string, cfg config.Config) error {
 	case "duplicates":
 		return duplicateCmd(nil, o, home, cfg)
 	case "ports":
-		return portsCmd(nil, o)
+		return portsAndProcsPanel()
 	default:
 		return fmt.Errorf("unknown menu command: %s", command)
+	}
+}
+
+func portsAndProcsPanel() error {
+	fd := int(os.Stdin.Fd())
+	state, err := term.MakeRaw(fd)
+	if err != nil {
+		return fmt.Errorf("enable ports and processes panel: %w", err)
+	}
+	defer func() {
+		_ = term.Restore(fd, state)
+		fmt.Print("\033[?25h")
+	}()
+
+	selected := 0
+	for {
+		fmt.Print("\033[H\033[2J")
+		if selected == 0 {
+			rows, listErr := listPorts(false)
+			if listErr != nil {
+				fmt.Printf("Ports\n\n  %v\n", listErr)
+			} else {
+				printPortsTable(rows, false)
+			}
+		} else {
+			rows, listErr := listProcesses("")
+			if listErr != nil {
+				fmt.Printf("Processes\n\n  %v\n", listErr)
+			} else {
+				printProcsTable(rows, "")
+			}
+		}
+		fmt.Println("\n  ↑↓ switch view   R refresh   Q return")
+		key, readErr := readHomeKey(os.Stdin)
+		if readErr != nil {
+			return readErr
+		}
+		switch key {
+		case homeKeyUp, homeKeyDown:
+			selected = 1 - selected
+		case homeKeyQuit, homeKeyEnter:
+			return nil
+		case homeKeyRefresh:
+			continue
+		}
 	}
 }
 

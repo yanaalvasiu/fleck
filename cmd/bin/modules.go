@@ -17,6 +17,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode"
 
 	"github.com/yanaalvasiu/fleck/internal/config"
 	"github.com/yanaalvasiu/fleck/internal/output"
@@ -52,20 +53,9 @@ func portsCmd(args []string, o output.Options) error {
 			filteredArgs = append(filteredArgs, arg)
 		}
 	}
-	protocol := "-iTCP"
-	state := "-sTCP:LISTEN"
-	if udp {
-		protocol = "-iUDP"
-		state = "-iUDP"
-	}
-	cmd := exec.Command("lsof", "-nP", protocol, state, "-Fpcun")
-	out, err := cmd.Output()
+	rows, err := listPorts(udp)
 	if err != nil {
-		return fmt.Errorf("lsof unavailable or no listeners: %w", err)
-	}
-	rows := parseLsof(out)
-	for i := range rows {
-		enrichPortRow(&rows[i])
+		return err
 	}
 	if len(filteredArgs) == 1 {
 		var f []portRow
@@ -76,7 +66,47 @@ func portsCmd(args []string, o output.Options) error {
 		}
 		rows = f
 	}
+	if !o.JSON && output.IsTTY() {
+		printPortsTable(rows, udp)
+		return nil
+	}
 	return output.Print(rows, o)
+}
+
+func listPorts(udp bool) ([]portRow, error) {
+	protocol := "-iTCP"
+	state := "-sTCP:LISTEN"
+	if udp {
+		protocol = "-iUDP"
+		state = "-iUDP"
+	}
+	out, err := exec.Command("lsof", "-nP", protocol, state, "-Fpcun").Output()
+	if err != nil {
+		return nil, fmt.Errorf("lsof unavailable or no listeners: %w", err)
+	}
+	rows := parseLsof(out)
+	for i := range rows {
+		enrichPortRow(&rows[i])
+	}
+	return rows, nil
+}
+
+func printPortsTable(rows []portRow, udp bool) {
+	protocol := "TCP"
+	if udp {
+		protocol = "UDP"
+	}
+	fmt.Printf("Ports · %s listening\n\n", protocol)
+	if len(rows) == 0 {
+		fmt.Println("  No listening ports found.")
+		return
+	}
+	fmt.Printf("  %-7s %-7s %-20s %-14s %-10s %s\n", "PORT", "PID", "PROCESS", "USER", "CPU", "MEM")
+	for _, row := range rows {
+		fmt.Printf("  %-7s %-7s %-20s %-14s %-10s %s\n",
+			row.Port, row.PID, truncateText(row.Command, 20), truncateText(row.User, 14), row.CPU, row.Memory)
+	}
+	fmt.Println("\n  Use: fleck ports PORT · fleck ports free PORT")
 }
 func parseLsof(b []byte) []portRow {
 	var rows []portRow
@@ -201,8 +231,12 @@ func procsCmd(args []string, o output.Options) error {
 		if err != nil {
 			return err
 		}
-		if err := output.Print(rows, o); err != nil {
-			return err
+		if o.JSON || !output.IsTTY() {
+			if err := output.Print(rows, o); err != nil {
+				return err
+			}
+		} else {
+			printProcsTable(rows, query)
 		}
 		if !watch || !output.IsTTY() {
 			return nil
@@ -212,23 +246,71 @@ func procsCmd(args []string, o output.Options) error {
 	}
 }
 
+func printProcsTable(rows []procRow, query string) {
+	title := "Processes"
+	if query != "" {
+		title += " · " + query
+	}
+	fmt.Printf("%s\n\n", title)
+	if len(rows) == 0 {
+		fmt.Println("  No matching processes.")
+		return
+	}
+	visible := rows
+	if len(visible) > 24 {
+		visible = visible[:24]
+	}
+	fmt.Printf("  %-8s %-28s %-8s %s\n", "PID", "PROCESS", "CPU", "MEM")
+	for _, row := range visible {
+		fmt.Printf("  %-8d %-28s %-8s %s\n", row.PID, truncateText(row.Command, 28), row.CPU, row.Memory)
+	}
+	if len(visible) < len(rows) {
+		fmt.Printf("\n  … %d more processes hidden; use --json for the full list.\n", len(rows)-len(visible))
+	}
+	fmt.Println("\n  Use: fleck procs kill PID")
+}
+
+func truncateText(value string, width int) string {
+	value = strings.Join(strings.Fields(value), " ")
+	if len(value) <= width {
+		return value
+	}
+	if width < 4 {
+		return value[:width]
+	}
+	return value[:width-3] + "..."
+}
+
 func listProcesses(query string) ([]procRow, error) {
-	out, err := exec.Command("ps", "-axo", "pid=,comm=,%cpu=,%mem=").Output()
+	out, err := exec.Command("ps", "-ww", "-axo", "pid=,args=,%cpu=,%mem=").Output()
 	if err != nil {
 		return nil, err
 	}
 	var rows []procRow
 	s := bufio.NewScanner(bytes.NewReader(out))
 	for s.Scan() {
-		f := strings.Fields(s.Text())
-		if len(f) < 4 {
+		line := strings.TrimSpace(s.Text())
+		lastSpace := strings.LastIndexFunc(line, unicode.IsSpace)
+		if lastSpace < 0 {
 			continue
 		}
-		pid, err := strconv.Atoi(f[0])
+		memory := strings.TrimSpace(line[lastSpace:])
+		beforeMemory := strings.TrimSpace(line[:lastSpace])
+		cpuSpace := strings.LastIndexFunc(beforeMemory, unicode.IsSpace)
+		if cpuSpace < 0 {
+			continue
+		}
+		cpu := strings.TrimSpace(beforeMemory[cpuSpace:])
+		beforeCPU := strings.TrimSpace(beforeMemory[:cpuSpace])
+		pidEnd := strings.IndexFunc(beforeCPU, unicode.IsSpace)
+		if pidEnd < 0 {
+			continue
+		}
+		pid, err := strconv.Atoi(beforeCPU[:pidEnd])
 		if err != nil {
 			continue
 		}
-		rows = append(rows, procRow{PID: pid, Command: strings.Join(f[1:len(f)-2], " "), CPU: f[len(f)-2], Memory: f[len(f)-1]})
+		rows = append(rows, procRow{PID: pid, Command: strings.TrimSpace(beforeCPU[pidEnd:]), CPU: cpu, Memory: memory})
 	}
 	if query != "" {
 		q := strings.ToLower(query)
