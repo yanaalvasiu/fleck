@@ -427,6 +427,11 @@ func newPolicy(home string, cfg config.Config) (safety.Policy, error) {
 			filepath.Join(home, ".npm"), filepath.Join(home, ".cache"),
 			filepath.Join(home, ".pnpm-store"), filepath.Join(home, ".yarn"), filepath.Join(home, ".gradle"),
 		}
+		if runtime.GOOS == "windows" {
+			if local := os.Getenv("LOCALAPPDATA"); local != "" {
+				roots = append(roots, filepath.Join(local, "Temp"), filepath.Join(local, "npm-cache"), filepath.Join(local, "pip"), filepath.Join(local, "Google"))
+			}
+		}
 	}
 	return safety.NewPolicy(home, roots, cfg.Whitelist)
 }

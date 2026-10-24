@@ -42,7 +42,7 @@ The same release binaries work from PowerShell and CMD. Fleck does not require a
 
 ## Safety model
 
-Every candidate is previewed before action. `--dry-run` prints the plan and exits; non-interactive use requires `--yes`. Items go to `~/.Trash`, never directly to permanent deletion. Paths are resolved immediately before acting, must be below configured roots, and are refused if protected, whitelisted, symlink-escaped, root, or the home directory itself. Ports and process actions refuse PID 1, Fleck itself, its parent shell, launchd, kernel_task, WindowServer, and other users' processes.
+Every candidate is previewed before action. `--dry-run` prints the plan and exits; non-interactive use requires `--yes`. On macOS, items go to `~/.Trash`; on Windows, Fleck uses its recoverable `%LOCALAPPDATA%\\Fleck\\Trash` area. Fleck never directly permanently deletes planned items. Paths are resolved immediately before acting, must be below configured roots, and are refused if protected, whitelisted, symlink-escaped, root, or the home directory itself. Ports and process actions refuse PID 1, Fleck itself, its parent shell, launchd, kernel_task, WindowServer, and other users' processes.
 
 If Clean or Uninstall finds a selected item that is not user-writable, it prints the affected count and asks whether to continue with `sudo` or skip those items. Elevation is requested only for those specific items; dry-run and JSON modes never prompt.
 
