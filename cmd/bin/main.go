@@ -464,7 +464,8 @@ func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 		return fmt.Sprintf("%s%d  %s%-17s%s%s%s%s\r\n", marker, number, nameStyle, name, nameReset, muted, description, reset)
 	}
 
-	header := logo + "\r\n"
+	// Keep the brand block visually separate from the interactive modules.
+	header := logo + "\r\n\r\n"
 	footer := fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\r\n", muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
 	if !showDetails {
 		footer = fmt.Sprintf("  %s↑↓/jk%s · %sEnter%s · %sQ%s\r\n", muted, reset, muted, reset, muted, reset)
