@@ -23,13 +23,15 @@ All tests use temporary directories and spawned fixtures. No telemetry is collec
 ```text
 fleck clean [--dry-run] [--yes] [--json]
 fleck uninstall [--orphans] [--dry-run] [--yes] [--json]
-fleck duplicates [PATH] [--dry-run] [--yes] [--json]
-fleck ports [PORT]
-fleck ports free PORT [--yes]
+fleck duplicates [PATH] [--trash] [--dry-run] [--yes] [--json]
+fleck ports [PORT] [--udp]
+fleck ports free PORT [--group] [--yes]
 fleck procs [SEARCH] [--watch]
+fleck procs kill PID [--yes]
 fleck history [--json]
 fleck update
 fleck version
+fleck doctor [--json]
 ```
 
 The current implementation uses the Go standard library plus `x/term` to minimize attack surface and avoid cgo. Cobra, Bubble Tea, gopsutil, BLAKE3, image hashing, and SQLite are deliberately not runtime dependencies until their macOS behavior is covered by fixtures. If introduced, pin versions and verify their licenses in CI. Shell completion and perceptual-image matching remain planned work.

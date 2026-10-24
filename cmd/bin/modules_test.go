@@ -108,3 +108,31 @@ func TestFindDuplicatesSkipsHardlinksAndIncludesEmptyFiles(t *testing.T) {
 		t.Fatalf("duplicate groups = %#v, want only the two independent empty files", groups)
 	}
 }
+
+func TestDuplicateTrashKeepsOneCopy(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	root := filepath.Join(home, "Library", "Caches", "Demo")
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	first := filepath.Join(root, "a.txt")
+	second := filepath.Join(root, "b.txt")
+	for _, path := range []string{first, second} {
+		if err := os.WriteFile(path, []byte("same"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := duplicateCmd([]string{"--trash"}, output.Options{Yes: true}, home, config.Config{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(first); err != nil {
+		t.Fatalf("keeper was removed: %v", err)
+	}
+	if _, err := os.Stat(second); !os.IsNotExist(err) {
+		t.Fatalf("duplicate was not moved: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".Trash", "b.txt")); err != nil {
+		t.Fatalf("duplicate is not in Trash: %v", err)
+	}
+}

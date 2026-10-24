@@ -25,29 +25,52 @@ import (
 )
 
 type portRow struct {
-	Port    string `json:"port"`
-	PID     string `json:"pid"`
-	Command string `json:"command"`
-	User    string `json:"user"`
+	Port      string `json:"port"`
+	PID       string `json:"pid"`
+	Command   string `json:"command"`
+	User      string `json:"user"`
+	Cmdline   string `json:"cmdline,omitempty"`
+	CWD       string `json:"cwd,omitempty"`
+	StartTime string `json:"start_time,omitempty"`
+	CPU       string `json:"cpu,omitempty"`
+	Memory    string `json:"memory,omitempty"`
 }
 
 func portsCmd(args []string, o output.Options) error {
 	if len(args) >= 1 && args[0] == "free" {
-		if len(args) != 2 {
-			return fmt.Errorf("usage: ports free PORT")
+		if len(args) < 2 || len(args) > 3 || (len(args) == 3 && args[2] != "--group") {
+			return fmt.Errorf("usage: ports free PORT [--group]")
 		}
-		return freePort(args[1], o)
+		return freePort(args[1], len(args) == 3, o)
 	}
-	cmd := exec.Command("lsof", "-nP", "-iTCP", "-sTCP:LISTEN", "-Fpcu")
+	udp := false
+	filteredArgs := make([]string, 0, len(args))
+	for _, arg := range args {
+		if arg == "--udp" {
+			udp = true
+		} else {
+			filteredArgs = append(filteredArgs, arg)
+		}
+	}
+	protocol := "-iTCP"
+	state := "-sTCP:LISTEN"
+	if udp {
+		protocol = "-iUDP"
+		state = "-iUDP"
+	}
+	cmd := exec.Command("lsof", "-nP", protocol, state, "-Fpcun")
 	out, err := cmd.Output()
 	if err != nil {
 		return fmt.Errorf("lsof unavailable or no listeners: %w", err)
 	}
 	rows := parseLsof(out)
-	if len(args) == 1 {
+	for i := range rows {
+		enrichPortRow(&rows[i])
+	}
+	if len(filteredArgs) == 1 {
 		var f []portRow
 		for _, r := range rows {
-			if r.Port == args[0] {
+			if r.Port == filteredArgs[0] {
 				f = append(f, r)
 			}
 		}
@@ -83,7 +106,7 @@ func parseLsof(b []byte) []portRow {
 	}
 	return rows
 }
-func freePort(port string, o output.Options) error {
+func freePort(port string, group bool, o output.Options) error {
 	out, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fpcu").Output()
 	if err != nil {
 		return fmt.Errorf("lsof unavailable or no listener on %s: %w", port, err)
@@ -98,22 +121,45 @@ func freePort(port string, o output.Options) error {
 		return fmt.Errorf("operation refused")
 	}
 	pid, _ := strconv.Atoi(r.PID)
-	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
-		return fmt.Errorf("refusing protected PID %d", pid)
-	}
-	if strings.EqualFold(r.Command, "launchd") || strings.EqualFold(r.Command, "kernel_task") || strings.EqualFold(r.Command, "WindowServer") {
-		return fmt.Errorf("refusing protected process %q", r.Command)
-	}
-	if r.User != "" {
-		current, _ := userName()
-		if current != "" && r.User != current {
-			return fmt.Errorf("refusing another user's process")
-		}
+	if err := validateProcessTarget(pid, r.Command, r.User); err != nil {
+		return err
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return err
 	}
+	if !waitForProcessExit(pid, 3*time.Second) {
+		if group {
+			if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+				return fmt.Errorf("SIGKILL process group: %w", err)
+			}
+		} else if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+			return fmt.Errorf("SIGKILL: %w", err)
+		}
+	}
 	return nil
+}
+
+func enrichPortRow(row *portRow) {
+	row.Cmdline, row.CPU, row.Memory, row.StartTime = processStats(row.PID)
+	if cwd, err := exec.Command("lsof", "-a", "-p", row.PID, "-d", "cwd", "-Fn").Output(); err == nil {
+		for _, line := range strings.Split(string(cwd), "\n") {
+			if strings.HasPrefix(line, "n") {
+				row.CWD = line[1:]
+			}
+		}
+	}
+}
+
+func processStats(pid string) (string, string, string, string) {
+	out, err := exec.Command("ps", "-o", "command=,%cpu=,%mem=,lstart=", "-p", pid).Output()
+	if err != nil {
+		return "", "", "", ""
+	}
+	fields := strings.Fields(string(out))
+	if len(fields) < 5 {
+		return strings.TrimSpace(string(out)), "", "", ""
+	}
+	return strings.Join(fields[:len(fields)-5], " "), fields[len(fields)-5], fields[len(fields)-4], strings.Join(fields[len(fields)-3:], " ")
 }
 
 type procRow struct {
@@ -195,10 +241,20 @@ func listProcesses(query string) ([]procRow, error) {
 }
 
 func killProcess(pid int, o output.Options) error {
+	command, user := processIdentity(pid)
+	if err := validateProcessTarget(pid, command, user); err != nil {
+		return err
+	}
+	if !confirm(o, fmt.Sprintf("Send SIGTERM to %s (pid %d)?", command, pid)) {
+		return fmt.Errorf("operation refused")
+	}
+	return syscall.Kill(pid, syscall.SIGTERM)
+}
+
+func validateProcessTarget(pid int, command, user string) error {
 	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
 		return fmt.Errorf("refusing protected PID %d", pid)
 	}
-	command, user := processIdentity(pid)
 	for _, protected := range []string{"launchd", "kernel_task", "WindowServer"} {
 		if strings.EqualFold(command, protected) {
 			return fmt.Errorf("refusing protected process %q", command)
@@ -208,10 +264,18 @@ func killProcess(pid int, o output.Options) error {
 	if user != "" && current != "" && user != current {
 		return fmt.Errorf("refusing another user's process")
 	}
-	if !confirm(o, fmt.Sprintf("Send SIGTERM to %s (pid %d)?", command, pid)) {
-		return fmt.Errorf("operation refused")
+	return nil
+}
+
+func waitForProcessExit(pid int, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if err := syscall.Kill(pid, 0); err != nil {
+			return true
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
-	return syscall.Kill(pid, syscall.SIGTERM)
+	return syscall.Kill(pid, 0) != nil
 }
 
 func processIdentity(pid int) (string, string) {
@@ -233,14 +297,75 @@ type dupGroup struct {
 
 func duplicateCmd(args []string, o output.Options, home string, cfg config.Config) error {
 	root := home
-	if len(args) > 0 && !strings.HasPrefix(args[0], "--") {
-		root = args[0]
+	trashAction := false
+	for _, arg := range args {
+		switch {
+		case arg == "--trash":
+			trashAction = true
+		case !strings.HasPrefix(arg, "--"):
+			root = arg
+		}
 	}
 	groups, err := findDuplicates(root)
 	if err != nil {
 		return err
 	}
-	return output.Print(groups, o)
+	if !trashAction {
+		return output.Print(groups, o)
+	}
+	if root != home {
+		return fmt.Errorf("duplicate actions are limited to the current home directory")
+	}
+	if o.JSON {
+		return output.Print(map[string]any{"groups": groups, "action": "trash", "dry_run": o.DryRun}, o)
+	}
+	if len(groups) == 0 {
+		return fmt.Errorf("nothing to do")
+	}
+	for _, group := range groups {
+		keeper, remove := duplicateKeeper(group.Paths)
+		fmt.Printf("keep: %s\n", keeper)
+		for _, path := range remove {
+			fmt.Printf("move: %s\n", path)
+		}
+	}
+	if o.DryRun {
+		return nil
+	}
+	if !confirm(o, "Move duplicate copies to Trash?") {
+		return fmt.Errorf("operation refused")
+	}
+	p, err := newPolicy(home, cfg)
+	if err != nil {
+		return err
+	}
+	moved := 0
+	for _, group := range groups {
+		_, remove := duplicateKeeper(group.Paths)
+		for _, path := range remove {
+			if err := moveToTrashInternal(home, p, path, "duplicates", o, needsElevation(path), false); err != nil {
+				fmt.Printf("failed: %s (%v)\n", path, err)
+				continue
+			}
+			moved++
+		}
+	}
+	fmt.Printf("Moved %d duplicate item(s) to Trash.\n", moved)
+	return nil
+}
+
+func duplicateKeeper(paths []string) (string, []string) {
+	sorted := append([]string(nil), paths...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if len(sorted[i]) != len(sorted[j]) {
+			return len(sorted[i]) < len(sorted[j])
+		}
+		return sorted[i] < sorted[j]
+	})
+	if len(sorted) == 0 {
+		return "", nil
+	}
+	return sorted[0], sorted[1:]
 }
 func findDuplicates(root string) ([]dupGroup, error) {
 	bySize := map[int64][]string{}
@@ -457,7 +582,8 @@ func appLeftovers(home, bundleID string) []string {
 			continue
 		}
 		for _, entry := range entries {
-			if entry.Name() == bundleID || strings.Contains(entry.Name(), bundleID) {
+			name := strings.TrimSuffix(entry.Name(), ".plist")
+			if entry.Name() == bundleID || name == bundleID {
 				out = append(out, filepath.Join(root, entry.Name()))
 			}
 		}
@@ -476,11 +602,12 @@ func findOrphanCandidates(home string, apps []appInfo) []uninstallItem {
 		entries, _ := os.ReadDir(root)
 		for _, entry := range entries {
 			name := entry.Name()
-			if strings.Contains(name, ".") && !installed[name] && strings.HasPrefix(name, "com.") {
+			bundleID := strings.TrimSuffix(name, ".plist")
+			if strings.Contains(bundleID, ".") && !installed[bundleID] && strings.HasPrefix(bundleID, "com.") {
 				path := filepath.Join(root, name)
 				if !seen[path] {
 					seen[path] = true
-					out = append(out, uninstallItem{Path: path, Name: name, BundleID: name, Kind: "orphan-candidate"})
+					out = append(out, uninstallItem{Path: path, Name: name, BundleID: bundleID, Kind: "orphan-candidate"})
 				}
 			}
 		}

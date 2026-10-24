@@ -56,6 +56,8 @@ func main() {
 	switch args[0] {
 	case "version":
 		versionCmd(o)
+	case "doctor":
+		err = doctorCmd(home, cfg, o)
 	case "update":
 		err = updateCmd(o)
 	case "history":
@@ -117,18 +119,20 @@ func commandHelp(command string) {
 	case "uninstall":
 		fmt.Println("Usage: fleck uninstall [--orphans] [--dry-run] [--yes] [--json]")
 	case "duplicates":
-		fmt.Println("Usage: fleck duplicates [PATH] [--dry-run] [--yes] [--json]")
+		fmt.Println("Usage: fleck duplicates [PATH] [--trash] [--dry-run] [--yes] [--json]")
 	case "ports":
-		fmt.Println("Usage: fleck ports [PORT] | fleck ports free PORT [--yes]")
+		fmt.Println("Usage: fleck ports [PORT] [--udp] | fleck ports free PORT [--group] [--yes]")
 	case "procs":
 		fmt.Println("Usage: fleck procs [SEARCH] [--watch] | fleck procs kill PID [--yes]")
+	case "doctor":
+		fmt.Println("Usage: fleck doctor [--json]")
 	default:
 		help()
 	}
 }
 
 func help() {
-	fmt.Println(binName + " — a cautious macOS utility tool\n\nUsage:\n  " + binName + " [flags] <command>\n\nCommands:\n  clean        inspect known-safe user caches\n  uninstall    inspect applications and exact bundle leftovers\n  duplicates   find exact duplicate files\n  ports        list listening ports; ports free PORT stops its owner\n  procs        list or stop processes\n  history      show append-only operation history\n  update       show or apply a Homebrew update\n  version      show build and update information\n\nFlags: --json --yes --dry-run --debug --no-color")
+	fmt.Println(binName + " — a cautious macOS utility tool\n\nUsage:\n  " + binName + " [flags] <command>\n\nCommands:\n  clean        inspect known-safe user caches\n  uninstall    inspect applications and exact bundle leftovers\n  duplicates   find exact duplicate files\n  ports        list listening ports; ports free PORT stops its owner\n  procs        list or stop processes\n  history      show append-only operation history\n  update       show or apply a Homebrew update\n  version      show build and update information\n  doctor       inspect Fleck permissions and configuration\n\nFlags: --json --yes --dry-run --debug --no-color")
 }
 func fail(code int, msg string) { fmt.Fprintln(os.Stderr, msg); os.Exit(code) }
 func versionCmd(o output.Options) {
@@ -152,6 +156,41 @@ func historyCmd(home string, o output.Options) error {
 		return err
 	}
 	return output.Print(e, o)
+}
+
+func doctorCmd(home string, cfg config.Config, o output.Options) error {
+	checks := map[string]any{
+		"home":              home,
+		"config_path":       config.Path(home, binName),
+		"config_exists":     fileExists(config.Path(home, binName)),
+		"whitelist_entries": len(cfg.Whitelist),
+		"scan_paths":        cfg.ScanPaths,
+		"oplog_path":        filepath.Join(home, "Library", "Logs", binName, "operations.log"),
+		"update_check":      cfg.UpdateCheck,
+		"trash_exists":      fileExists(filepath.Join(home, ".Trash")),
+	}
+	if _, err := os.ReadDir("/Library/Caches"); err != nil {
+		checks["full_disk_access"] = "not available or not granted for system caches"
+	} else {
+		checks["full_disk_access"] = "readable"
+	}
+	if _, err := exec.LookPath("brew"); err == nil {
+		checks["homebrew"] = "available"
+	} else {
+		checks["homebrew"] = "not found"
+	}
+	if o.JSON {
+		return output.Print(checks, o)
+	}
+	for _, key := range []string{"home", "config_path", "config_exists", "whitelist_entries", "scan_paths", "oplog_path", "trash_exists", "full_disk_access", "homebrew"} {
+		fmt.Printf("%-18s %v\n", key+":", checks[key])
+	}
+	return nil
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }
 func homeScreen(v, home string, cfg config.Config) error {
 	fd := int(os.Stdin.Fd())
