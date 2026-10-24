@@ -390,16 +390,17 @@ func renderHome(v string, selected int, color bool) string {
 	logo := fmt.Sprintf("%s  ______ _           _     \r\n |  ____| |         | |    \r\n | |__  | | ___  ___| | __ \r\n |  __| | |/ _ \\/ __| |/ / \r\n | |    | |  __/ (__|   <  \r\n |_|    |_|\\___|\\___|_|\\_\\%s", accent, reset)
 	row := func(index, number int, name, description string) string {
 		marker := "    "
-		start := ""
 		labelStyle := ""
+		arrowStyle := ""
 		if index == selected {
 			marker = "  ▸ "
 			labelStyle = accent
-			if color {
-				start = "\033[48;5;17m"
-			}
+			arrowStyle = accent
 		}
-		return fmt.Sprintf("%s%s%s%-2d  %-17s%s%s%s\r\n", start, labelStyle, marker, number, name, muted, description, reset)
+		if arrowStyle != "" {
+			marker = "  " + arrowStyle + "▸" + reset + " "
+		}
+		return fmt.Sprintf("%s%-2d  %s%-17s%s%s%s%s\r\n", marker, number, labelStyle, name, reset, muted, description, reset)
 	}
 
 	return fmt.Sprintf("%s\r\n"+
