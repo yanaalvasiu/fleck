@@ -442,7 +442,7 @@ func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 	if width < 1 {
 		width = 80
 	}
-	logo := fmt.Sprintf("%s  __ _           _    \r\n / _| | ___  ___| | __\r\n| |_| |/ _ \\/ __| |/ /\r\n|  _| |  __/ (__|   < \r\n|_| |_|\\___|\\___|_|\\_\\%s", accent, reset)
+	logo := fmt.Sprintf("%s  FFFFF  L      EEEEE  CCCCC  K   K\r\n  F      L      E      C      K  K \r\n  FFF    L      EEEE   C      KKK  \r\n  F      L      E      C      K  K \r\n  F      LLLLL  EEEEE  CCCCC  K   K%s", accent, reset)
 	if width < 34 {
 		logo = fmt.Sprintf("%s  FLECK%s", accent, reset)
 	}

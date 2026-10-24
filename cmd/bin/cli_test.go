@@ -57,7 +57,7 @@ func TestDiscoverAppsAndExactLeftovers(t *testing.T) {
 
 func TestHomeRenderShowsFleckWordmarkAndMenu(t *testing.T) {
 	rendered := renderHome("0.1.8", 0, false)
-	for _, want := range []string{"__ _", "0.1.8", "Clean", "Ports & Procs", "Enter open"} {
+	for _, want := range []string{"FFFFF", "0.1.8", "Clean", "Ports & Procs", "Enter open"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("home render missing %q:\n%s", want, rendered)
 		}
