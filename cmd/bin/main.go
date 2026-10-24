@@ -12,9 +12,12 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/yanaalvasiu/fleck/internal/completions"
 	"github.com/yanaalvasiu/fleck/internal/config"
+	"github.com/yanaalvasiu/fleck/internal/modules"
 	"github.com/yanaalvasiu/fleck/internal/oplog"
 	"github.com/yanaalvasiu/fleck/internal/output"
+	"github.com/yanaalvasiu/fleck/internal/permissions"
 	"github.com/yanaalvasiu/fleck/internal/safety"
 	"github.com/yanaalvasiu/fleck/internal/trash"
 )
@@ -57,6 +60,8 @@ func main() {
 		versionCmd(o)
 	case "doctor":
 		err = doctorCmd(home, cfg, o)
+	case "completion":
+		err = completionCmd(args[1:])
 	case "update":
 		err = updateCmd(o)
 	case "history":
@@ -125,13 +130,20 @@ func commandHelp(command string) {
 		fmt.Println("Usage: fleck procs [SEARCH] [--watch] | fleck procs kill PID [--yes]")
 	case "doctor":
 		fmt.Println("Usage: fleck doctor [--json]")
+	case "completion":
+		fmt.Println("Usage: fleck completion zsh|bash|fish")
 	default:
 		help()
 	}
 }
 
 func help() {
-	fmt.Println(binName + " — a cautious macOS utility tool\n\nUsage:\n  " + binName + " [flags] <command>\n\nCommands:\n  clean        inspect known-safe user caches\n  uninstall    inspect applications and exact bundle leftovers\n  duplicates   find exact duplicate files\n  ports        list listening ports; ports free PORT stops its owner\n  procs        list or stop processes\n  history      show append-only operation history\n  update       show or apply a Homebrew update\n  version      show build and update information\n  doctor       inspect Fleck permissions and configuration\n\nFlags: --json --yes --dry-run --debug --no-color")
+	text := binName + " — a cautious macOS utility tool\n\nUsage:\n  " + binName + " [flags] <command>\n\nCommands:\n"
+	for _, module := range modules.All {
+		text += fmt.Sprintf("  %-12s %s\n", module.Command, module.Description)
+	}
+	text += "  procs        list or stop processes\n  history      show append-only operation history\n  update       show or apply a Homebrew update\n  version      show build and update information\n  doctor       inspect Fleck permissions and configuration\n  completion   print shell completion\n\nFlags: --json --yes --dry-run --debug --no-color"
+	fmt.Println(text)
 }
 func fail(code int, msg string) { fmt.Fprintln(os.Stderr, msg); os.Exit(code) }
 func versionCmd(o output.Options) {
@@ -168,11 +180,7 @@ func doctorCmd(home string, cfg config.Config, o output.Options) error {
 		"update_check":      cfg.UpdateCheck,
 		"trash_exists":      fileExists(filepath.Join(home, ".Trash")),
 	}
-	if _, err := os.ReadDir("/Library/Caches"); err != nil {
-		checks["full_disk_access"] = "not available or not granted for system caches"
-	} else {
-		checks["full_disk_access"] = "readable"
-	}
+	checks["full_disk_access"] = permissions.Status()
 	if _, err := exec.LookPath("brew"); err == nil {
 		checks["homebrew"] = "available"
 	} else {
@@ -218,7 +226,7 @@ func homeScreen(v, home string, cfg config.Config) error {
 		case homeKeyDown:
 			selected = (selected + 1) % 4
 		case homeKeyEnter:
-			command := []string{"clean", "uninstall", "duplicates", "ports"}[selected]
+			command := modules.All[selected].Command
 			_ = term.Restore(fd, state)
 			fmt.Print("\033[H\033[2J")
 			if err := runHomeCommand(command, home, cfg); err != nil {
@@ -411,12 +419,29 @@ func renderHome(v string, selected int, color bool) string {
 		muted, reset,
 		green, reset,
 	) +
-		row(0, 1, "Clean", "Free up disk space") +
-		row(1, 2, "Uninstall", "Remove apps completely") +
-		row(2, 3, "Duplicates", "Find repeated files") +
-		row(3, 4, "Ports & Procs", "Inspect local processes") +
+		moduleRows(modules.All, row) +
 		"\r\n" + fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\r\n",
 		muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
+}
+
+func moduleRows(descriptors []modules.Descriptor, row func(int, int, string, string) string) string {
+	var b strings.Builder
+	for i, module := range descriptors {
+		b.WriteString(row(i, i+1, module.Name, module.Description))
+	}
+	return b.String()
+}
+
+func completionCmd(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("usage: fleck completion zsh|bash|fish")
+	}
+	data, ok := completions.ForShell(args[0])
+	if !ok {
+		return fmt.Errorf("unsupported shell %q (choose zsh, bash, or fish)", args[0])
+	}
+	fmt.Print(data)
+	return nil
 }
 
 func newPolicy(home string, cfg config.Config) (safety.Policy, error) {
