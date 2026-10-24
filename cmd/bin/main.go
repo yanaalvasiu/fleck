@@ -147,6 +147,14 @@ func help() {
 }
 func fail(code int, msg string) { fmt.Fprintln(os.Stderr, msg); os.Exit(code) }
 func versionCmd(o output.Options) {
+	if o.JSON {
+		_ = output.Print(versionInfo(), o)
+		return
+	}
+	output.PrintTerminal(versionText())
+}
+
+func versionInfo() map[string]string {
 	installPath := os.Args[0]
 	if executable, err := os.Executable(); err == nil {
 		installPath = executable
@@ -154,12 +162,12 @@ func versionCmd(o output.Options) {
 			installPath = resolved
 		}
 	}
-	info := map[string]string{"version": version, "commit": commit, "build_date": buildDate, "install_path": installPath, "go": runtime.Version()}
-	if o.JSON {
-		_ = output.Print(info, o)
-		return
-	}
-	fmt.Printf("%s %s\ncommit: %s\nbuild date: %s\ninstall path: %s\ngo: %s\n", binName, version, commit, buildDate, installPath, runtime.Version())
+	return map[string]string{"version": version, "commit": commit, "build_date": buildDate, "install_path": installPath, "go": runtime.Version()}
+}
+
+func versionText() string {
+	info := versionInfo()
+	return fmt.Sprintf("%s %s\ncommit: %s\nbuild date: %s\ninstall path: %s\ngo: %s\n", binName, info["version"], info["commit"], info["build_date"], info["install_path"], info["go"])
 }
 func historyCmd(home string, o output.Options) error {
 	e, err := oplog.Read(home, binName)
@@ -205,16 +213,16 @@ func homeScreen(v, home string, cfg config.Config) error {
 	if err != nil {
 		return fmt.Errorf("enable interactive terminal: %w", err)
 	}
-	fmt.Print("\033[?25l")
+	output.PrintTerminal("\033[?25l")
 	defer func() {
 		_ = term.Restore(fd, state)
-		fmt.Print("\033[?25h")
+		output.PrintTerminal("\033[?25h")
 	}()
 
 	selected := 0
 	for {
-		fmt.Print("\033[H\033[2J")
-		fmt.Print(renderHomeAtWidth(v, selected, os.Getenv("NO_COLOR") == "", homeTerminalWidth()))
+		output.PrintTerminal("\033[H\033[2J")
+		output.PrintTerminal(renderHomeAtWidth(v, selected, os.Getenv("NO_COLOR") == "", homeTerminalWidth()))
 
 		key, err := readHomeKey(os.Stdin)
 		if err != nil {
@@ -228,7 +236,7 @@ func homeScreen(v, home string, cfg config.Config) error {
 		case homeKeyEnter:
 			command := modules.All[selected].Command
 			_ = term.Restore(fd, state)
-			fmt.Print("\033[H\033[2J")
+			output.PrintTerminal("\033[H\033[2J")
 			if err := runHomeCommand(command, home, cfg); err != nil {
 				fmt.Fprintln(os.Stderr, err)
 			}
@@ -236,13 +244,13 @@ func homeScreen(v, home string, cfg config.Config) error {
 			if err != nil {
 				return fmt.Errorf("restore interactive terminal: %w", err)
 			}
-			fmt.Print("\nPress any key to return to Fleck.")
+			output.PrintTerminal("\nPress any key to return to Fleck.")
 			_, _ = readHomeKey(os.Stdin)
 		case homeKeyHistory:
 			showHomePanel("History", func() error { return historyCmd(home, output.Options{}) })
 		case homeKeySettings:
 			showHomePanel("Settings", func() error {
-				fmt.Printf("update checks: %v\ncolors: %v\nwhitelist entries: %d\n", cfg.UpdateCheck, cfg.Colors, len(cfg.Whitelist))
+				output.PrintfTerminal("update checks: %v\ncolors: %v\nwhitelist entries: %d\n", cfg.UpdateCheck, cfg.Colors, len(cfg.Whitelist))
 				return nil
 			})
 		case homeKeyUpdate:
@@ -317,12 +325,12 @@ func readHomeKey(r *os.File) (homeKey, error) {
 }
 
 func showHomePanel(title string, render func() error) {
-	fmt.Print("\033[H\033[2J")
-	fmt.Println(title)
+	output.PrintTerminal("\033[H\033[2J")
+	output.PrintlnTerminal(title)
 	if err := render(); err != nil {
-		fmt.Println("error:", err)
+		output.PrintlnTerminal("error:", err)
 	}
-	fmt.Print("\nPress any key to return to Fleck.")
+	output.PrintTerminal("\nPress any key to return to Fleck.")
 	_, _ = readHomeKey(os.Stdin)
 }
 
@@ -350,29 +358,29 @@ func portsAndProcsPanel() error {
 	}
 	defer func() {
 		_ = term.Restore(fd, state)
-		fmt.Print("\033[?25h")
+		output.PrintTerminal("\033[?25h")
 	}()
 
 	selected := 0
 	for {
-		fmt.Print("\033[H\033[2J")
-		fmt.Print(renderPortsPanelTabs(selected, output.IsTTY()))
+		output.PrintTerminal("\033[H\033[2J")
+		output.PrintTerminal(renderPortsPanelTabs(selected, output.IsTTY()))
 		if selected == 0 {
 			rows, listErr := listPorts(false)
 			if listErr != nil {
-				fmt.Printf("Ports\n\n  %v\n", listErr)
+				output.PrintfTerminal("Ports\n\n  %v\n", listErr)
 			} else {
 				printPortsTable(rows, false)
 			}
 		} else {
 			rows, listErr := listProcesses("")
 			if listErr != nil {
-				fmt.Printf("Processes\n\n  %v\n", listErr)
+				output.PrintfTerminal("Processes\n\n  %v\n", listErr)
 			} else {
 				printProcsTable(rows, "")
 			}
 		}
-		fmt.Println("  ↑↓ switch view   R refresh   Q return")
+		output.PrintlnTerminal("  ↑↓ switch view   R refresh   Q return")
 		key, readErr := readHomeKey(os.Stdin)
 		if readErr != nil {
 			return readErr
@@ -484,7 +492,11 @@ func completionCmd(args []string) error {
 	if !ok {
 		return fmt.Errorf("unsupported shell %q (choose zsh, bash, or fish)", args[0])
 	}
-	fmt.Print(data)
+	if output.IsTTY() {
+		output.PrintTerminal(data)
+	} else {
+		fmt.Print(data)
+	}
 	return nil
 }
 
@@ -508,7 +520,7 @@ func confirm(o output.Options, prompt string) bool {
 	if o.Yes {
 		return true
 	}
-	fmt.Printf("%s [y/N] ", prompt)
+	output.PrintfTerminal("%s [y/N] ", prompt)
 	var s string
 	_, _ = fmt.Scanln(&s)
 	return strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
@@ -520,8 +532,8 @@ func requestElevation(module string, paths []string, o output.Options) (bool, er
 	if len(paths) == 0 || platformIsElevated() || o.DryRun || o.JSON {
 		return false, nil
 	}
-	fmt.Printf("%s: %d protected item(s) need administrator permission.\n", module, len(paths))
-	fmt.Println("Press Enter to continue with sudo, or type s and Enter to skip them.")
+	output.PrintfTerminal("%s: %d protected item(s) need administrator permission.\n", module, len(paths))
+	output.PrintlnTerminal("Press Enter to continue with sudo, or type s and Enter to skip them.")
 	if o.Yes {
 		return true, nil
 	}
@@ -530,7 +542,7 @@ func requestElevation(module string, paths []string, o output.Options) (bool, er
 		return false, err
 	}
 	if strings.EqualFold(strings.TrimSpace(answer), "s") || strings.EqualFold(strings.TrimSpace(answer), "skip") {
-		fmt.Println("Skipped protected items.")
+		output.PrintlnTerminal("Skipped protected items.")
 		return false, nil
 	}
 	return true, nil
@@ -545,7 +557,7 @@ func moveToTrashInternalAuthorized(home string, p safety.Policy, path, module st
 		return err
 	}
 	if o.DryRun {
-		fmt.Println("would move to Trash:", resolved)
+		output.PrintlnTerminal("would move to Trash:", resolved)
 		return nil
 	}
 	if askConfirmation && !confirm(o, "Move listed item(s) to Trash?") {
@@ -573,12 +585,12 @@ func updateCmd(o output.Options) error {
 		resolved = real
 	}
 	if _, err := exec.LookPath("brew"); err != nil || !strings.Contains(resolved, string(filepath.Separator)+"Cellar"+string(filepath.Separator)) {
-		fmt.Println("Fleck was not installed by Homebrew.")
-		fmt.Println("Install/update with: brew upgrade " + binName)
+		output.PrintlnTerminal("Fleck was not installed by Homebrew.")
+		output.PrintlnTerminal("Install/update with: brew upgrade " + binName)
 		return nil
 	}
 	cmd := "brew upgrade " + binName
-	fmt.Println(cmd)
+	output.PrintlnTerminal(cmd)
 	if !confirm(o, "Run this command?") {
 		return fmt.Errorf("operation refused")
 	}

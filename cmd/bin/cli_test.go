@@ -78,6 +78,33 @@ func TestPortsPanelTabsShowActiveView(t *testing.T) {
 	}
 }
 
+func TestVersionPanelTextUsesRawSafeLineEndings(t *testing.T) {
+	rendered := output.NormalizeTerminalNewlines(versionText())
+	for i := 0; i < len(rendered); i++ {
+		if rendered[i] == '\n' && (i == 0 || rendered[i-1] != '\r') {
+			t.Fatalf("version panel contains a lone LF: %q", rendered)
+		}
+	}
+	for _, want := range []string{"fleck ", "commit:", "build date:", "install path:", "go:"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("version panel missing %q: %q", want, rendered)
+		}
+	}
+}
+
+func TestPortsPanelTextUsesRawSafeLineEndingsAndHonorsNoColor(t *testing.T) {
+	t.Setenv("NO_COLOR", "1")
+	rendered := output.NormalizeTerminalNewlines(renderPortsPanelTabs(0, true))
+	if strings.Contains(rendered, "\033[") {
+		t.Fatalf("NO_COLOR panel contains ANSI escapes: %q", rendered)
+	}
+	for i := 0; i < len(rendered); i++ {
+		if rendered[i] == '\n' && (i == 0 || rendered[i-1] != '\r') {
+			t.Fatalf("ports panel contains a lone LF: %q", rendered)
+		}
+	}
+}
+
 func TestProcessActionsRequireYesWhenNonInteractive(t *testing.T) {
 	if err := confirmProcessAction(output.Options{JSON: true}, "unused"); err == nil {
 		t.Fatal("JSON process actions must require --yes")

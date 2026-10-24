@@ -117,7 +117,8 @@ func printPortsTable(rows []portRow, udp bool) {
 	line := func(format string, args ...any) {
 		text := fmt.Sprintf(format, args...)
 		if output.IsTTY() {
-			text = strings.ReplaceAll(text, "\n", "\r\n")
+			output.PrintTerminal(text)
+			return
 		}
 		fmt.Print(text)
 	}
@@ -179,7 +180,7 @@ func freePort(port string, group bool, o output.Options) error {
 		return err
 	}
 	if !o.JSON && output.IsTTY() {
-		fmt.Printf("%s (pid %s) owns port %s\n", r.Command, r.PID, port)
+		output.PrintfTerminal("%s (pid %s) owns port %s\n", r.Command, r.PID, port)
 	}
 	if err := confirmProcessAction(o, "Send SIGTERM?"); err != nil {
 		return err
@@ -270,7 +271,7 @@ func procsCmd(args []string, o output.Options) error {
 			return nil
 		}
 		time.Sleep(time.Second)
-		fmt.Print("\033[H\033[2J")
+		output.PrintTerminal("\033[H\033[2J")
 	}
 }
 
@@ -279,7 +280,8 @@ func printProcsTable(rows []procRow, query string) {
 	line := func(format string, args ...any) {
 		text := fmt.Sprintf(format, args...)
 		if output.IsTTY() {
-			text = strings.ReplaceAll(text, "\n", "\r\n")
+			output.PrintTerminal(text)
+			return
 		}
 		fmt.Print(text)
 	}
@@ -472,15 +474,15 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 			return output.Print(groups, o)
 		}
 		for _, group := range groups {
-			fmt.Printf("similar images · %d files · distance ≤ %d\n", len(group.Paths), group.Distance)
+			output.PrintfTerminal("similar images · %d files · distance ≤ %d\n", len(group.Paths), group.Distance)
 			for _, p := range group.Paths {
-				fmt.Println("  ", p)
+				output.PrintlnTerminal("  ", p)
 			}
 		}
 		if len(groups) == 0 {
 			return fmt.Errorf("no similar image groups found")
 		}
-		fmt.Println("Similar images are never selected automatically; review them before taking action.")
+		output.PrintlnTerminal("Similar images are never selected automatically; review them before taking action.")
 		return nil
 	}
 	if absolute, err := filepath.Abs(root); err == nil {
@@ -490,7 +492,7 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 		home = filepath.Clean(absolute)
 	}
 	if output.IsTTY() && !o.JSON {
-		fmt.Printf("Scanning %s for exact duplicates...\n", root)
+		output.PrintfTerminal("Scanning %s for exact duplicates...\n", root)
 	}
 	groups, err := findDuplicates(root)
 	if err != nil {
@@ -515,12 +517,12 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 	}
 	for _, group := range groups {
 		keeper, remove := duplicateKeeper(group.Paths)
-		fmt.Printf("keep: %s\n", keeper)
+		output.PrintfTerminal("keep: %s\n", keeper)
 		for _, path := range remove {
 			if cloneAction {
-				fmt.Printf("clone: %s ← %s\n", path, keeper)
+				output.PrintfTerminal("clone: %s ← %s\n", path, keeper)
 			} else {
-				fmt.Printf("move: %s\n", path)
+				output.PrintfTerminal("move: %s\n", path)
 			}
 		}
 	}
@@ -549,16 +551,16 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 				actionErr = moveToTrashInternal(home, p, path, "duplicates", o, needsElevation(path), false)
 			}
 			if actionErr != nil {
-				fmt.Printf("failed: %s (%v)\n", path, actionErr)
+				output.PrintfTerminal("failed: %s (%v)\n", path, actionErr)
 				continue
 			}
 			moved++
 		}
 	}
 	if cloneAction {
-		fmt.Printf("Created %d APFS clone(s).\n", moved)
+		output.PrintfTerminal("Created %d APFS clone(s).\n", moved)
 	} else {
-		fmt.Printf("Moved %d duplicate item(s) to Trash.\n", moved)
+		output.PrintfTerminal("Moved %d duplicate item(s) to Trash.\n", moved)
 	}
 	return nil
 }
@@ -572,7 +574,7 @@ func cloneDuplicate(source, target string, p safety.Policy, o output.Options) er
 		return err
 	}
 	if o.DryRun {
-		fmt.Println("would create APFS clone:", resolved)
+		output.PrintlnTerminal("would create APFS clone:", resolved)
 		return nil
 	}
 	if runtime.GOOS != "darwin" {
@@ -805,7 +807,7 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 		return output.Print(map[string]any{"apps": apps, "items": items}, o)
 	}
 	for _, item := range items {
-		fmt.Printf("  %s · %s\n", item.Kind, item.Path)
+		output.PrintfTerminal("  %s · %s\n", item.Kind, item.Path)
 	}
 	if o.DryRun {
 		return nil
@@ -826,21 +828,21 @@ func uninstallCmd(args []string, o output.Options, home string, cfg config.Confi
 	for _, item := range items {
 		if item.Kind == "launch-agent" {
 			if err := unloadLaunchAgent(item.Path); err != nil {
-				fmt.Printf("skipped launch agent %s: %v\n", item.Path, err)
+				output.PrintfTerminal("skipped launch agent %s: %v\n", item.Path, err)
 				continue
 			}
 		}
 		elevated := needsElevation(item.Path)
 		if err := moveToTrashInternal(home, p, item.Path, "uninstall", o, elevated, false); err != nil {
-			fmt.Printf("failed: %s (%v)\n", item.Path, err)
+			output.PrintfTerminal("failed: %s (%v)\n", item.Path, err)
 			continue
 		}
-		fmt.Println("moved:", item.Path)
+		output.PrintlnTerminal("moved:", item.Path)
 	}
 	for _, app := range apps {
 		if app.Cask {
 			if err := uninstallCask(app.CaskName, o); err != nil {
-				fmt.Printf("cask %s: %v\n", app.CaskName, err)
+				output.PrintfTerminal("cask %s: %v\n", app.CaskName, err)
 			}
 		}
 	}
@@ -894,14 +896,14 @@ func selectUninstallApps(apps []appInfo) ([]appInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = term.Restore(fd, state); fmt.Print("\033[?25h\n") }()
+	defer func() { _ = term.Restore(fd, state); output.PrintTerminal("\033[?25h\n") }()
 	selected := make([]bool, len(apps))
 	cursor := 0
 	for {
-		fmt.Print("\033[H\033[2J\033[?25l")
-		fmt.Println("Uninstall · select applications")
-		fmt.Println("  ↑↓ move   Space select   Enter continue   Q cancel")
-		fmt.Println()
+		output.PrintTerminal("\033[H\033[2J\033[?25l")
+		output.PrintlnTerminal("Uninstall · select applications")
+		output.PrintlnTerminal("  ↑↓ move   Space select   Enter continue   Q cancel")
+		output.PrintlnTerminal()
 		for i, app := range apps {
 			mark := "·"
 			if selected[i] {
@@ -915,7 +917,7 @@ func selectUninstallApps(apps []appInfo) ([]appInfo, error) {
 			if app.Cask {
 				label += " (Homebrew cask)"
 			}
-			fmt.Printf("%s%s %s\n", pointer, mark, label)
+			output.PrintfTerminal("%s%s %s\n", pointer, mark, label)
 		}
 		key, err := readHomeKey(os.Stdin)
 		if err != nil {
@@ -947,7 +949,7 @@ func uninstallCask(name string, o output.Options) error {
 		return nil
 	}
 	if o.DryRun {
-		fmt.Println("would run: brew uninstall --cask", name)
+		output.PrintlnTerminal("would run: brew uninstall --cask", name)
 		return nil
 	}
 	if !o.Yes && !confirm(o, "Uninstall Homebrew cask "+name+"?") {
@@ -1093,13 +1095,13 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return err
 	}
 	if output.IsTTY() && !o.JSON && !o.DryRun {
-		fmt.Println("\r\nScanning approved cache locations...")
+		output.PrintlnTerminal("\r\nScanning approved cache locations...")
 	}
 	interactiveScan := output.IsTTY() && !o.JSON && !o.DryRun
 	systemCandidates, err := scanCleanRoot("/Library/Caches", "System caches", interactiveScan)
 	if err != nil {
 		if interactiveScan {
-			fmt.Printf("  %s!%s System caches · unavailable (%v)\n", currentTheme(true).Warning, currentTheme(true).Reset, err)
+			output.PrintfTerminal("  %s!%s System caches · unavailable (%v)\n", currentTheme(true).Warning, currentTheme(true).Reset, err)
 		}
 		systemCandidates = nil
 	}
@@ -1118,8 +1120,8 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	candidates = append(systemCandidates, candidates...)
 	if interactiveScan {
 		t := currentTheme(true)
-		fmt.Printf("%s✓ Scan complete%s: %d approved cache location(s) found.\n", t.Success, t.Reset, len(candidates))
-		fmt.Println("  Review the grouped cache plan below before anything is moved.")
+		output.PrintfTerminal("%s✓ Scan complete%s: %d approved cache location(s) found.\n", t.Success, t.Reset, len(candidates))
+		output.PrintlnTerminal("  Review the grouped cache plan below before anything is moved.")
 		time.Sleep(450 * time.Millisecond)
 	}
 	if o.JSON {
@@ -1230,23 +1232,23 @@ func freeSpaceBytes(path string) (int64, error) {
 func printCleanupSummary(trackedBytes int64, moved int, freeBefore, freeAfter int64, skipped, failed int) {
 	separator := strings.Repeat("=", 70)
 	reset, muted, green, yellow, cyan, red := cleanColors()
-	fmt.Printf("%s%s%s\n", muted, separator, reset)
-	fmt.Printf("%sCleanup complete%s\n", green, reset)
-	fmt.Printf("%sTracked cleanup: %s%s | %sItems cleaned: %d%s\n", yellow, formatBytes(trackedBytes), reset, cyan, moved, reset)
+	output.PrintfTerminal("%s%s%s\n", muted, separator, reset)
+	output.PrintfTerminal("%sCleanup complete%s\n", green, reset)
+	output.PrintfTerminal("%sTracked cleanup: %s%s | %sItems cleaned: %d%s\n", yellow, formatBytes(trackedBytes), reset, cyan, moved, reset)
 	if freeBefore > 0 && freeAfter > 0 {
 		delta := freeAfter - freeBefore
 		deltaColor := green
 		if delta < 0 {
 			deltaColor = red
 		}
-		fmt.Printf("%sFree space: %s (%s%s%s)%s\n", cyan, formatBytes(freeAfter), deltaColor, signedBytes(delta), reset, reset)
+		output.PrintfTerminal("%sFree space: %s (%s%s%s)%s\n", cyan, formatBytes(freeAfter), deltaColor, signedBytes(delta), reset, reset)
 	} else {
-		fmt.Printf("%sFree space: unavailable%s\n", cyan, reset)
+		output.PrintfTerminal("%sFree space: unavailable%s\n", cyan, reset)
 	}
 	if skipped > 0 || failed > 0 {
-		fmt.Printf("%sSkipped: %d%s | %sFailed: %d%s\n", muted, skipped, reset, red, failed, reset)
+		output.PrintfTerminal("%sSkipped: %d%s | %sFailed: %d%s\n", muted, skipped, reset, red, failed, reset)
 	}
-	fmt.Printf("%s%s%s\n", muted, separator, reset)
+	output.PrintfTerminal("%s%s%s\n", muted, separator, reset)
 }
 
 func cleanColors() (reset, muted, green, yellow, cyan, red string) {
@@ -1268,12 +1270,12 @@ func printCleanDeleteProgress(done, total int, current string) {
 		filled = width
 	}
 	bar := strings.Repeat("█", filled) + strings.Repeat("·", width-filled)
-	fmt.Printf("\r\033[2K%sDeleting%s %-24s %s[%s%s%s] %d/%d", muted, reset, truncateText(current, 24), yellow, green, bar, yellow, done, total)
+	output.PrintfTerminal("\r\033[2K%sDeleting%s %-24s %s[%s%s%s] %d/%d", muted, reset, truncateText(current, 24), yellow, green, bar, yellow, done, total)
 }
 
 func finishCleanDeleteProgress() {
 	if output.IsTTY() {
-		fmt.Println()
+		output.PrintlnTerminal()
 	}
 }
 
@@ -1295,10 +1297,10 @@ func cleanIntro() (bool, error) {
 	t := currentTheme(output.IsTTY())
 	reset, title, muted, accent, keyStyle := t.Reset, t.Accent, t.Muted, t.Primary, t.Warning
 
-	fmt.Print("\033[H\033[2J")
-	fmt.Printf("  %sClean Your Mac%s\r\n\r\n", title, reset)
-	fmt.Printf("  %sⓘ Use --dry-run to preview, --whitelist to manage protected paths%s\r\n", muted, reset)
-	fmt.Printf("  %s›%s Enter to authorize, scan, and clean caches; %sSpace%s to cancel: ", accent, reset, keyStyle, reset)
+	output.PrintTerminal("\033[H\033[2J")
+	output.PrintfTerminal("  %sClean Your Mac%s\r\n\r\n", title, reset)
+	output.PrintfTerminal("  %sⓘ Use --dry-run to preview, --whitelist to manage protected paths%s\r\n", muted, reset)
+	output.PrintfTerminal("  %s›%s Enter to authorize, scan, and clean caches; %sSpace%s to cancel: ", accent, reset, keyStyle, reset)
 
 	var key [1]byte
 	for {
@@ -1307,10 +1309,10 @@ func cleanIntro() (bool, error) {
 		}
 		switch key[0] {
 		case ' ', 'q', 'Q', 3:
-			fmt.Print("skip\r\n")
+			output.PrintTerminal("skip\r\n")
 			return false, nil
 		case '\r', '\n':
-			fmt.Print("continue\r\n")
+			output.PrintTerminal("continue\r\n")
 			return true, nil
 		}
 	}
@@ -1318,14 +1320,14 @@ func cleanIntro() (bool, error) {
 
 func requestAdminAccess() error {
 	if runtime.GOOS == "windows" {
-		fmt.Println("\r\nWindows administrator access is not required for the approved user cache paths.")
+		output.PrintlnTerminal("\r\nWindows administrator access is not required for the approved user cache paths.")
 		return nil
 	}
-	fmt.Println("\r\nEnter your credentials:")
+	output.PrintlnTerminal("\r\nEnter your credentials:")
 	if err := exec.Command("sudo", "-v").Run(); err != nil {
 		return fmt.Errorf("administrator access was not granted: %w", err)
 	}
-	fmt.Println("✓ Admin access granted")
+	output.PrintlnTerminal("✓ Admin access granted")
 	return nil
 }
 
@@ -1413,12 +1415,12 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 	t := currentTheme(output.IsTTY())
 	reset, title, muted, accent, green, yellow := t.Reset, t.Accent, t.Muted, t.Primary, t.Success, t.Warning
 
-	fmt.Printf("%sClean Your Mac%s\n\n", title, reset)
-	fmt.Printf("%sⓘ Preview first. Confirm before anything is moved to Trash.%s\n", muted, reset)
+	output.PrintfTerminal("%sClean Your Mac%s\n\n", title, reset)
+	output.PrintfTerminal("%sⓘ Preview first. Confirm before anything is moved to Trash.%s\n", muted, reset)
 	if dryRun {
-		fmt.Printf("%sⓘ Dry run: no files will be changed.%s\n", muted, reset)
+		output.PrintfTerminal("%sⓘ Dry run: no files will be changed.%s\n", muted, reset)
 	}
-	fmt.Printf("%s⚙%s User home | %sWhitelist: %d configured entries%s\n\n", muted, reset, muted, whitelistCount, reset)
+	output.PrintfTerminal("%s⚙%s User home | %sWhitelist: %d configured entries%s\n\n", muted, reset, muted, whitelistCount, reset)
 	groups := map[string][]cleanPlanItem{}
 	for _, item := range plan {
 		groups[item.Category] = append(groups[item.Category], item)
@@ -1429,7 +1431,7 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 			continue
 		}
 		categoryTotal := sumPlanBytes(items)
-		fmt.Printf("%s➤ %s%s · %d items · %s\n", accent, category, reset, len(items), formatBytes(categoryTotal))
+		output.PrintfTerminal("%s➤ %s%s · %d items · %s\n", accent, category, reset, len(items), formatBytes(categoryTotal))
 		for _, group := range groupCleanItems(items) {
 			total += group.Bytes
 			recreated := ""
@@ -1437,16 +1439,16 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 				recreated = " · ↻ recreated since last clean"
 			}
 			if group.Count > 1 {
-				fmt.Printf("  %s✓%s %s · %d items · %s%s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes), recreated)
+				output.PrintfTerminal("  %s✓%s %s · %d items · %s%s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes), recreated)
 			} else {
-				fmt.Printf("  %s✓%s %-8s %s%s\n", green, reset, formatBytes(group.Bytes), group.Name, recreated)
+				output.PrintfTerminal("  %s✓%s %-8s %s%s\n", green, reset, formatBytes(group.Bytes), group.Name, recreated)
 			}
 		}
-		fmt.Println()
+		output.PrintlnTerminal()
 	}
-	fmt.Printf("\n%sTotal reclaimable: %s%s\n", yellow, formatBytes(total), reset)
+	output.PrintfTerminal("\n%sTotal reclaimable: %s%s\n", yellow, formatBytes(total), reset)
 	if !dryRun {
-		fmt.Printf("%sAdministrator access, if needed, will be requested only after confirmation.%s\n", muted, reset)
+		output.PrintfTerminal("%sAdministrator access, if needed, will be requested only after confirmation.%s\n", muted, reset)
 	}
 }
 
@@ -1629,8 +1631,8 @@ func printCleanScanItem(category, path string, size int64, done, total int) {
 	if total > 0 {
 		progress = fmt.Sprintf(" %d/%d", done, total)
 	}
-	fmt.Printf("\r\033[2K  %s›%s scanning %-16s · %-24s · %s%s", t.Primary, t.Reset, category, truncateText(filepath.Base(path), 24), formatBytes(size), progress)
-	fmt.Print("\n")
+	output.PrintfTerminal("\r\033[2K  %s›%s scanning %-16s · %-24s · %s%s", t.Primary, t.Reset, category, truncateText(filepath.Base(path), 24), formatBytes(size), progress)
+	output.PrintTerminal("\n")
 	time.Sleep(35 * time.Millisecond)
 }
 
