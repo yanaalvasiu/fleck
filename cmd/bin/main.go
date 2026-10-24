@@ -415,7 +415,11 @@ func renderHome(v string, selected int, color bool) string {
 func newPolicy(home string, cfg config.Config) (safety.Policy, error) {
 	roots := cfg.ScanPaths
 	if len(roots) == 0 {
-		roots = []string{filepath.Join(home, "Library"), filepath.Join(home, "Downloads")}
+		roots = []string{
+			filepath.Join(home, "Library"), filepath.Join(home, "Downloads"),
+			filepath.Join(home, ".npm"), filepath.Join(home, ".cache"),
+			filepath.Join(home, ".pnpm-store"), filepath.Join(home, ".yarn"), filepath.Join(home, ".gradle"),
+		}
 	}
 	return safety.NewPolicy(home, roots, cfg.Whitelist)
 }

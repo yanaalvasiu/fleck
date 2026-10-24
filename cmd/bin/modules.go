@@ -1053,9 +1053,13 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	if output.IsTTY() && !o.JSON && !o.DryRun {
 		fmt.Println("\r\nScanning approved cache locations...")
 	}
-	systemCandidates, err := safeSystemCleanCandidates()
+	interactiveScan := output.IsTTY() && !o.JSON && !o.DryRun
+	systemCandidates, err := scanCleanRoot("/Library/Caches", "System caches", interactiveScan)
 	if err != nil {
-		return err
+		if interactiveScan {
+			fmt.Printf("  %s!%s System caches · unavailable (%v)\n", currentTheme(true).Warning, currentTheme(true).Reset, err)
+		}
+		systemCandidates = nil
 	}
 	if len(systemCandidates) > 0 {
 		roots := append([]string{}, p.AllowedRoots...)
@@ -1065,13 +1069,16 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 			return err
 		}
 	}
-	candidates, err := safeCleanCandidates(home)
+	candidates, err := scanUserCleanCandidates(home, interactiveScan)
 	if err != nil {
 		return err
 	}
 	candidates = append(systemCandidates, candidates...)
-	if output.IsTTY() && !o.JSON && !o.DryRun {
-		fmt.Printf("✓ Scan complete: %d approved cache location(s) found.\n", len(candidates))
+	if interactiveScan {
+		t := currentTheme(true)
+		fmt.Printf("%s✓ Scan complete%s: %d approved cache location(s) found.\n", t.Success, t.Reset, len(candidates))
+		fmt.Println("  Review the grouped cache plan below before anything is moved.")
+		time.Sleep(450 * time.Millisecond)
 	}
 	if o.JSON {
 		return output.Print(map[string]any{"items": candidates, "count": len(candidates)}, o)
@@ -1081,9 +1088,6 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	}
 	plan := makeCleanPlan(candidates)
 	markRecreatedSinceLastClean(home, plan)
-	if output.IsTTY() && !o.JSON {
-		fmt.Print("\033[H\033[2J")
-	}
 	printCleanPlan(plan, o.DryRun, len(cfg.Whitelist))
 	if o.DryRun {
 		return nil
@@ -1110,23 +1114,35 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		if _, e := p.Validate(x); e != nil {
 			skipped++
 			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
+			if output.IsTTY() {
+				time.Sleep(45 * time.Millisecond)
+			}
 			continue
 		}
 		useSudo := elevated && needsElevation(x)
 		if !useSudo && needsElevation(x) {
 			skipped++
 			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
+			if output.IsTTY() {
+				time.Sleep(45 * time.Millisecond)
+			}
 			continue
 		}
 		bytes := directorySize(x)
 		if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
 			failed++
 			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
+			if output.IsTTY() {
+				time.Sleep(45 * time.Millisecond)
+			}
 			continue
 		}
 		trackedBytes += bytes
 		moved++
 		printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
+		if output.IsTTY() {
+			time.Sleep(45 * time.Millisecond)
+		}
 	}
 	finishCleanDeleteProgress()
 	freeAfter, _ := freeSpaceBytes(home)
@@ -1339,15 +1355,8 @@ func directorySize(root string) int64 {
 
 func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 	total := int64(0)
-	reset, title, muted, accent, green, yellow := "", "", "", "", "", ""
-	if os.Getenv("NO_COLOR") == "" && output.IsTTY() {
-		reset = "\033[0m"
-		title = "\033[1;38;5;141m"
-		muted = "\033[38;5;245m"
-		accent = "\033[1;38;5;81m"
-		green = "\033[38;5;114m"
-		yellow = "\033[38;5;221m"
-	}
+	t := currentTheme(output.IsTTY())
+	reset, title, muted, accent, green, yellow := t.Reset, t.Accent, t.Muted, t.Primary, t.Success, t.Warning
 
 	fmt.Printf("%sClean Your Mac%s\n\n", title, reset)
 	fmt.Printf("%sⓘ Preview first. Confirm before anything is moved to Trash.%s\n", muted, reset)
@@ -1447,45 +1456,94 @@ func formatBytes(bytes int64) string {
 // active developer-tool data, which is not an allow-list decision Fleck can
 // prove safe. A future category-specific scan can add explicit log paths.
 func safeCleanCandidates(home string) ([]string, error) {
-	cacheRoot := filepath.Join(home, "Library", "Caches")
-	entries, err := os.ReadDir(cacheRoot)
+	return scanUserCleanCandidates(home, false)
+}
+
+func scanUserCleanCandidates(home string, visible bool) ([]string, error) {
+	candidates, err := scanCleanRoot(filepath.Join(home, "Library", "Caches"), "", visible)
+	if err != nil {
+		return nil, err
+	}
+	// These are explicit, well-known developer/browser cache roots. We never
+	// recursively guess under arbitrary home-directory paths.
+	known := []struct{ path, category string }{
+		{filepath.Join(home, ".npm"), "Developer tools"},
+		{filepath.Join(home, ".cache", "pip"), "Developer tools"},
+		{filepath.Join(home, ".cache", "go-build"), "Developer tools"},
+		{filepath.Join(home, ".cache", "huggingface"), "Developer tools"},
+		{filepath.Join(home, ".pnpm-store"), "Developer tools"},
+		{filepath.Join(home, ".yarn", "berry", "cache"), "Developer tools"},
+		{filepath.Join(home, ".gradle", "caches"), "Developer tools"},
+		{filepath.Join(home, "Library", "Developer", "Xcode", "DerivedData"), "Developer tools"},
+		{filepath.Join(home, "Library", "Developer", "CoreSimulator", "Caches"), "Developer tools"},
+		{filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Cache"), "Browsers"},
+		{filepath.Join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser", "Default", "Cache"), "Browsers"},
+		{filepath.Join(home, "Library", "Application Support", "Microsoft Edge", "Default", "Cache"), "Browsers"},
+		{filepath.Join(home, "Library", "Logs"), "User essentials"},
+	}
+	for _, item := range known {
+		info, statErr := os.Lstat(item.path)
+		if statErr != nil || info.Mode()&os.ModeSymlink != 0 {
+			continue
+		}
+		candidates = append(candidates, item.path)
+		if visible {
+			printCleanScanItem(item.category, item.path, directorySize(item.path), len(candidates), 0)
+		}
+	}
+	return uniquePaths(candidates), nil
+}
+
+func scanCleanRoot(root, category string, visible bool) ([]string, error) {
+	entries, err := os.ReadDir(root)
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, fmt.Errorf("read user cache directory: %w", err)
+		return nil, fmt.Errorf("read %s: %w", root, err)
 	}
-
 	candidates := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		if entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
-		candidates = append(candidates, filepath.Join(cacheRoot, entry.Name()))
+		path := filepath.Join(root, entry.Name())
+		candidates = append(candidates, path)
+		if visible {
+			label := category
+			if label == "" {
+				label = cleanCategory(path)
+			}
+			printCleanScanItem(label, path, directorySize(path), len(candidates), len(entries))
+		}
 	}
 	return candidates, nil
 }
 
-// safeSystemCleanCandidates is intentionally limited to direct children of
-// /Library/Caches. It does not scan or authorize arbitrary system paths.
-func safeSystemCleanCandidates() ([]string, error) {
-	const cacheRoot = "/Library/Caches"
-	entries, err := os.ReadDir(cacheRoot)
-	if os.IsNotExist(err) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read system cache directory: %w", err)
-	}
-
-	candidates := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		if entry.Type()&os.ModeSymlink != 0 {
-			continue
+func uniquePaths(paths []string) []string {
+	seen := make(map[string]bool, len(paths))
+	out := make([]string, 0, len(paths))
+	for _, path := range paths {
+		if !seen[path] {
+			seen[path] = true
+			out = append(out, path)
 		}
-		candidates = append(candidates, filepath.Join(cacheRoot, entry.Name()))
 	}
-	return candidates, nil
+	return out
+}
+
+func printCleanScanItem(category, path string, size int64, done, total int) {
+	if !output.IsTTY() {
+		return
+	}
+	t := currentTheme(true)
+	progress := ""
+	if total > 0 {
+		progress = fmt.Sprintf(" %d/%d", done, total)
+	}
+	fmt.Printf("\r\033[2K  %s›%s scanning %-16s · %-24s · %s%s", t.Primary, t.Reset, category, truncateText(filepath.Base(path), 24), formatBytes(size), progress)
+	fmt.Print("\n")
+	time.Sleep(35 * time.Millisecond)
 }
 
 var _ = time.Now

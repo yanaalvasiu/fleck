@@ -18,7 +18,7 @@ import (
 	"github.com/yanaalvasiu/fleck/internal/safety"
 )
 
-func TestSafeCleanCandidatesUsesTopLevelCachesOnly(t *testing.T) {
+func TestSafeCleanCandidatesUsesApprovedTopLevelRoots(t *testing.T) {
 	home := t.TempDir()
 	cacheRoot := filepath.Join(home, "Library", "Caches")
 	if err := os.MkdirAll(filepath.Join(cacheRoot, "ExampleApp", "nested"), 0o755); err != nil {
@@ -38,9 +38,10 @@ func TestSafeCleanCandidatesUsesTopLevelCachesOnly(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := filepath.Join(cacheRoot, "ExampleApp")
-	if len(items) != 1 || items[0] != want {
-		t.Fatalf("safeCleanCandidates() = %#v, want [%q]", items, want)
+	wantCache := filepath.Join(cacheRoot, "ExampleApp")
+	wantLogs := filepath.Join(home, "Library", "Logs")
+	if len(items) != 2 || items[0] != wantCache || items[1] != wantLogs {
+		t.Fatalf("safeCleanCandidates() = %#v, want [%q, %q]", items, wantCache, wantLogs)
 	}
 }
 
