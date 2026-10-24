@@ -1324,6 +1324,12 @@ func requestAdminAccess() error {
 		return nil
 	}
 	output.PrintlnTerminal("\r\nEnter your credentials:")
+	// sudo -v may silently succeed from macOS's cached timestamp. Clean must
+	// never begin its protected scan on that implicit authorization, so expire
+	// the cached credential and require an explicit password entry each run.
+	if err := exec.Command("sudo", "-k").Run(); err != nil {
+		return fmt.Errorf("could not reset administrator authentication: %w", err)
+	}
 	if err := exec.Command("sudo", "-v").Run(); err != nil {
 		return fmt.Errorf("administrator access was not granted: %w", err)
 	}

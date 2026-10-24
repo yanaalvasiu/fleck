@@ -7,6 +7,8 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -184,6 +186,23 @@ func TestCleanAuthorizationRunsBeforeProtectedScan(t *testing.T) {
 	}
 	if !called {
 		t.Fatal("clean scan authorization was not requested")
+	}
+}
+
+func TestCleanRequiresFreshSudoAuthentication(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not use sudo")
+	}
+	// Keep this test declarative: the implementation must invalidate the
+	// timestamp before validating credentials, rather than relying on a cached
+	// sudo session that would make the scan appear authorized.
+	source, err := os.ReadFile("modules.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(source)
+	if !strings.Contains(text, `exec.Command("sudo", "-k")`) || !strings.Contains(text, `exec.Command("sudo", "-v")`) {
+		t.Fatal("clean authorization must reset sudo timestamp before validating credentials")
 	}
 }
 
