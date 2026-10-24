@@ -113,17 +113,25 @@ func printPortsTable(rows []portRow, udp bool) {
 	if udp {
 		protocol = "UDP"
 	}
-	fmt.Printf("Ports · %s listening\n\n", protocol)
+	t := currentTheme(output.IsTTY())
+	line := func(format string, args ...any) {
+		text := fmt.Sprintf(format, args...)
+		if output.IsTTY() {
+			text = strings.ReplaceAll(text, "\n", "\r\n")
+		}
+		fmt.Print(text)
+	}
+	line("%sPorts · %s listening%s\n\n", t.Primary, protocol, t.Reset)
 	if len(rows) == 0 {
-		fmt.Println("  No listening ports found.")
+		line("  %sNo listening ports found.%s\n", t.Muted, t.Reset)
 		return
 	}
-	fmt.Printf("  %-7s %-7s %-20s %-14s %-10s %s\n", "PORT", "PID", "PROCESS", "USER", "CPU", "MEM")
+	line("  %s%-7s %-7s %-22s %-14s %7s %7s%s\n", t.Muted, "PORT", "PID", "PROCESS", "USER", "CPU", "MEM", t.Reset)
 	for _, row := range rows {
-		fmt.Printf("  %-7s %-7s %-20s %-14s %-10s %s\n",
-			row.Port, row.PID, truncateText(row.Command, 20), truncateText(row.User, 14), row.CPU, row.Memory)
+		line("  %s%-7s%s %-7s %-22s %-14s %7s %7s\n",
+			t.Accent, truncateText(row.Port, 7), t.Reset, truncateText(row.PID, 7), truncateText(row.Command, 22), truncateText(row.User, 14), truncateText(row.CPU, 7), truncateText(row.Memory, 7))
 	}
-	fmt.Println("\n  Use: fleck ports PORT · fleck ports free PORT")
+	line("\n  %sUse: fleck ports PORT · fleck ports free PORT%s\n", t.Muted, t.Reset)
 }
 func parseLsof(b []byte) []portRow {
 	var rows []portRow
@@ -267,27 +275,35 @@ func procsCmd(args []string, o output.Options) error {
 }
 
 func printProcsTable(rows []procRow, query string) {
+	t := currentTheme(output.IsTTY())
+	line := func(format string, args ...any) {
+		text := fmt.Sprintf(format, args...)
+		if output.IsTTY() {
+			text = strings.ReplaceAll(text, "\n", "\r\n")
+		}
+		fmt.Print(text)
+	}
 	title := "Processes"
 	if query != "" {
 		title += " · " + query
 	}
-	fmt.Printf("%s\n\n", title)
+	line("%s%s%s\n\n", t.Primary, title, t.Reset)
 	if len(rows) == 0 {
-		fmt.Println("  No matching processes.")
+		line("  %sNo matching processes.%s\n", t.Muted, t.Reset)
 		return
 	}
 	visible := rows
 	if len(visible) > 24 {
 		visible = visible[:24]
 	}
-	fmt.Printf("  %-8s %-28s %-8s %s\n", "PID", "PROCESS", "CPU", "MEM")
+	line("  %s%-8s %-28s %8s %8s%s\n", t.Muted, "PID", "PROCESS", "CPU", "MEM", t.Reset)
 	for _, row := range visible {
-		fmt.Printf("  %-8d %-28s %-8s %s\n", row.PID, truncateText(row.Command, 28), row.CPU, row.Memory)
+		line("  %s%-8d%s %-28s %8s %8s\n", t.Accent, row.PID, t.Reset, truncateText(row.Command, 28), truncateText(row.CPU, 8), truncateText(row.Memory, 8))
 	}
 	if len(visible) < len(rows) {
-		fmt.Printf("\n  … %d more processes hidden; use --json for the full list.\n", len(rows)-len(visible))
+		line("\n  %s… %d more processes hidden; use --json for the full list.%s\n", t.Muted, len(rows)-len(visible), t.Reset)
 	}
-	fmt.Println("\n  Use: fleck procs kill PID")
+	line("\n  %sUse: fleck procs kill PID%s\n", t.Muted, t.Reset)
 }
 
 func truncateText(value string, width int) string {
