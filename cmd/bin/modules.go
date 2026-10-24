@@ -122,7 +122,13 @@ func freePort(port string, group bool, o output.Options) error {
 	}
 	pid, _ := strconv.Atoi(r.PID)
 	if err := validateProcessTarget(pid, r.Command, r.User); err != nil {
-		return err
+		command, user := processIdentity(pid)
+		if command == "" {
+			return err
+		}
+		if err = validateProcessTarget(pid, command, user); err != nil {
+			return err
+		}
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return err
@@ -141,6 +147,8 @@ func freePort(port string, group bool, o output.Options) error {
 
 func enrichPortRow(row *portRow) {
 	row.Cmdline, row.CPU, row.Memory, row.StartTime = processStats(row.PID)
+	pid, _ := strconv.Atoi(row.PID)
+	_, row.User = processIdentity(pid)
 	if cwd, err := exec.Command("lsof", "-a", "-p", row.PID, "-d", "cwd", "-Fn").Output(); err == nil {
 		for _, line := range strings.Split(string(cwd), "\n") {
 			if strings.HasPrefix(line, "n") {
@@ -156,10 +164,10 @@ func processStats(pid string) (string, string, string, string) {
 		return "", "", "", ""
 	}
 	fields := strings.Fields(string(out))
-	if len(fields) < 5 {
+	if len(fields) < 7 {
 		return strings.TrimSpace(string(out)), "", "", ""
 	}
-	return strings.Join(fields[:len(fields)-5], " "), fields[len(fields)-5], fields[len(fields)-4], strings.Join(fields[len(fields)-3:], " ")
+	return strings.Join(fields[:len(fields)-7], " "), fields[len(fields)-7], fields[len(fields)-6], strings.Join(fields[len(fields)-5:], " ")
 }
 
 type procRow struct {
@@ -305,6 +313,9 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 		case !strings.HasPrefix(arg, "--"):
 			root = arg
 		}
+	}
+	if output.IsTTY() && !o.JSON {
+		fmt.Printf("Scanning %s for exact duplicates...\n", root)
 	}
 	groups, err := findDuplicates(root)
 	if err != nil {
