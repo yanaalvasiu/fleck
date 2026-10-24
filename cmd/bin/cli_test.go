@@ -57,7 +57,7 @@ func TestDiscoverAppsAndExactLeftovers(t *testing.T) {
 
 func TestHomeRenderShowsFleckWordmarkAndMenu(t *testing.T) {
 	rendered := renderHome("0.1.8", 0, false)
-	for _, want := range []string{"______", "fleck 0.1.8", "https://github.com/yanaalvasiu/fleck", "Clean", "Ports & Procs", "Enter open"} {
+	for _, want := range []string{"______", "|  ____|", "fleck 0.1.8", "https://github.com/yanaalvasiu/fleck", "Clean", "Ports & Procs", "Enter open"} {
 		if !strings.Contains(rendered, want) {
 			t.Fatalf("home render missing %q:\n%s", want, rendered)
 		}
@@ -122,6 +122,25 @@ func TestHomeRenderUsesArrowOnlyActiveState(t *testing.T) {
 	}
 	if strings.Contains(activeLine, "▸ 1  ▸") {
 		t.Fatalf("active row duplicated its marker: %q", activeLine)
+	}
+}
+
+func TestHomeRenderUsesAccentForActiveLabelWithoutBackground(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+	rendered := renderHome("0.1.8", 0, true)
+	activeLine := ""
+	for _, line := range strings.Split(rendered, "\r\n") {
+		if strings.Contains(line, "Clean") {
+			activeLine = line
+			break
+		}
+	}
+	want := "\033[38;5;39mClean"
+	if !strings.Contains(activeLine, want) {
+		t.Fatalf("active label should use the arrow accent: %q", activeLine)
+	}
+	if strings.Contains(activeLine, "\033[48;") {
+		t.Fatalf("active label must not add a background: %q", activeLine)
 	}
 }
 

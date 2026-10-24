@@ -451,9 +451,17 @@ func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 			marker = "  " + arrowStyle + "▸" + reset + " "
 		}
 		if !showDetails {
-			return fmt.Sprintf("%s%d  %s\r\n", marker, number, name)
+			nameStyle, nameReset := "", ""
+			if index == selected {
+				nameStyle, nameReset = accent, reset
+			}
+			return fmt.Sprintf("%s%d  %s%s%s\r\n", marker, number, nameStyle, name, nameReset)
 		}
-		return fmt.Sprintf("%s%d  %-17s%s%s%s\r\n", marker, number, name, muted, description, reset)
+		nameStyle, nameReset := "", ""
+		if index == selected {
+			nameStyle, nameReset = accent, reset
+		}
+		return fmt.Sprintf("%s%d  %s%-17s%s%s%s%s\r\n", marker, number, nameStyle, name, nameReset, muted, description, reset)
 	}
 
 	header := logo + "\r\n"
@@ -470,11 +478,11 @@ func renderBrandHeader(v string, details bool, accent, muted, green, reset strin
 	}
 	mark := []string{
 		"  ______ _           _    ",
-		" / ____| |         | |   ",
-		"| |    | | ___  ___| | __",
-		"| |    | |/ _ \\/ __| |/ /",
-		"| |____| |  __/ (__|   < ",
-		" \\_____|_|\\___|\\___|_|\\_\\",
+		" |  ____| |         | |   ",
+		" | |__  | | ___  ___| | __",
+		" |  __| | |/ _ \\/ __| |/ /",
+		" | |    | |  __/ (__|   < ",
+		" |_|    |_|\\___|\\___|_|\\_\\",
 	}
 	right := []string{
 		fmt.Sprintf("%s%s %s%s", muted, binName, v, reset),
