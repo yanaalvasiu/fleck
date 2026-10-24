@@ -1,6 +1,6 @@
 # Fleck
 
-Fleck is an open-source, no-telemetry macOS utility CLI with four cautious modules: Clean, Uninstall, Duplicates, and Ports & Procs. It uses a shared allow-list safety policy and Finder-compatible Trash moves.
+Fleck is an open-source, no-telemetry utility CLI for macOS and Windows with four cautious modules: Clean, Uninstall, Duplicates, and Ports & Procs. It uses a shared allow-list safety policy and recoverable Trash moves where the platform provides them.
 
 ## Install
 
@@ -9,6 +9,36 @@ brew install yanaalvasiu/tap/fleck
 ```
 
 Source repository: https://github.com/yanaalvasiu/fleck
+
+### macOS
+
+Homebrew installs the native Apple Silicon or Intel build on macOS 12 and later. Release archives are also available for `darwin/arm64` and `darwin/amd64`.
+
+### Windows PowerShell
+
+Download the `windows_amd64` or `windows_arm64` ZIP from the [latest release](https://github.com/yanaalvasiu/fleck/releases/latest), extract `fleck.exe`, and add its directory to `PATH`:
+
+```powershell
+$env:Path += ";$HOME\\bin"
+fleck version
+```
+
+For a Go-based install:
+
+```powershell
+go install github.com/yanaalvasiu/fleck/cmd/bin@latest
+```
+
+### Windows CMD
+
+Extract the matching release ZIP, then add the directory containing `fleck.exe` to `PATH` for the current CMD session:
+
+```bat
+set PATH=%PATH%;%USERPROFILE%\\bin
+fleck version
+```
+
+The same release binaries work from PowerShell and CMD. Fleck does not require administrator access for its approved user-level Windows paths.
 
 ## Safety model
 
@@ -36,6 +66,8 @@ fleck doctor [--json]
 
 The implementation uses the Go standard library plus `x/term` and the pure-Go `x/image/webp` decoder to minimize attack surface and avoid cgo. The image similarity matcher supports JPEG, PNG, GIF, and WebP; HEIC is reported as unsupported rather than converted implicitly. APFS clone mode delegates to macOS `/bin/cp -c`, which requests the native `clonefile` operation. Homebrew cask removal intentionally remains a package-manager operation after explicit confirmation; it is not silently invoked.
 
+Platform limitations: Clean and Uninstall currently use Fleck's macOS cache, application, launch-agent, Homebrew, and Finder-Trash integrations; those integrations are not available on Windows. Ports and process inspection on Windows uses `netstat` and `tasklist`, so command lines, CPU, memory, and user details may be less complete than on macOS. `ports free` and process termination use Windows process tools. APFS clone mode, `launchctl` agent unloading, Homebrew cask handling, and Finder-compatible Trash are macOS-only. Windows builds support the shared safety checks, duplicate discovery, process/port inspection, history, version, and help commands.
+
 `fleck uninstall` opens a raw-terminal multi-select app picker on a TTY. It can also discover installed Homebrew casks, unload matching per-user launch agents with `launchctl bootout`, and move application leftovers to Finder-compatible Trash. `fleck duplicates --similar` reports perceptually similar JPEG/PNG/GIF groups for manual review; similar images are never auto-selected. `--clone` replaces selected duplicate files with APFS clones and never calls a delete operation.
 
 ## Development
@@ -45,4 +77,4 @@ go test -race ./...
 go vet ./...
 ```
 
-The CI workflow runs tests, lint, and a dependency-license gate on every pull request. Releases target macOS 12+ on amd64 and arm64.
+The CI workflow runs tests, lint, dependency-license checks, and Windows amd64/arm64 cross-builds on every push and pull request. GoReleaser publishes `darwin` amd64/arm64 archives as `tar.gz` and Windows amd64/arm64 archives as `zip` files.
