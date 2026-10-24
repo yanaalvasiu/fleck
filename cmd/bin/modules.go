@@ -402,7 +402,7 @@ func findDuplicates(root string) ([]dupGroup, error) {
 	if err != nil {
 		return nil, err
 	}
-	var out []dupGroup
+	out := make([]dupGroup, 0)
 	for size, paths := range bySize {
 		if len(paths) < 2 {
 			continue
@@ -608,7 +608,7 @@ func findOrphanCandidates(home string, apps []appInfo) []uninstallItem {
 		installed[app.BundleID] = true
 	}
 	seen := make(map[string]bool)
-	var out []uninstallItem
+	out := make([]uninstallItem, 0)
 	for _, root := range []string{filepath.Join(home, "Library", "Application Support"), filepath.Join(home, "Library", "Caches"), filepath.Join(home, "Library", "Preferences")} {
 		entries, _ := os.ReadDir(root)
 		for _, entry := range entries {
