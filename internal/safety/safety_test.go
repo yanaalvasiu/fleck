@@ -72,3 +72,15 @@ func TestProtected(t *testing.T) {
 		t.Fatal("deny list mismatch")
 	}
 }
+
+func TestPolicyAllowsMissingConfiguredRootUntilItExists(t *testing.T) {
+	h := t.TempDir()
+	missing := filepath.Join(h, "Downloads")
+	p, err := NewPolicy(h, []string{missing}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Validate(filepath.Join(missing, "cache")); err == nil {
+		t.Fatal("a path below a missing root must not validate")
+	}
+}

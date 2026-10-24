@@ -81,3 +81,30 @@ func TestCleanMovesCacheToTrash(t *testing.T) {
 		t.Fatalf("cache was not moved to Trash: %v", err)
 	}
 }
+
+func TestFindDuplicatesSkipsHardlinksAndIncludesEmptyFiles(t *testing.T) {
+	root := t.TempDir()
+	first := filepath.Join(root, "empty-a")
+	second := filepath.Join(root, "empty-b")
+	third := filepath.Join(root, "empty-c")
+	if err := os.WriteFile(first, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(third, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	hardlink := filepath.Join(root, "hardlink")
+	if err := os.Link(first, hardlink); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := findDuplicates(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || len(groups[0].Paths) != 2 {
+		t.Fatalf("duplicate groups = %#v, want only the two independent empty files", groups)
+	}
+}

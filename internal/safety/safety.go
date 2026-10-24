@@ -31,7 +31,13 @@ func NewPolicy(home string, roots []string, whitelist []string) (Policy, error) 
 	for _, root := range roots {
 		r, e := filepath.EvalSymlinks(root)
 		if e != nil {
-			return Policy{}, e
+			// Standard scan roots such as ~/Downloads may not exist on a
+			// fresh account. Keep their absolute form; Validate will only
+			// accept a path below them once the root exists.
+			r, e = filepath.Abs(filepath.Clean(root))
+			if e != nil {
+				return Policy{}, e
+			}
 		}
 		if r == "/" || r == h {
 			return Policy{}, ErrRoot

@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/xml"
 	"fmt"
 	"io/fs"
 	"os"
@@ -83,7 +84,11 @@ func parseLsof(b []byte) []portRow {
 	return rows
 }
 func freePort(port string, o output.Options) error {
-	rows := parseLsof(must(exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fpcu").Output()))
+	out, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fpcu").Output()
+	if err != nil {
+		return fmt.Errorf("lsof unavailable or no listener on %s: %w", port, err)
+	}
+	rows := parseLsof(out)
 	if len(rows) == 0 {
 		return fmt.Errorf("nothing listening on %s", port)
 	}
@@ -93,19 +98,22 @@ func freePort(port string, o output.Options) error {
 		return fmt.Errorf("operation refused")
 	}
 	pid, _ := strconv.Atoi(r.PID)
-	if pid <= 1 {
-		return fmt.Errorf("protected PID")
+	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
+		return fmt.Errorf("refusing protected PID %d", pid)
+	}
+	if strings.EqualFold(r.Command, "launchd") || strings.EqualFold(r.Command, "kernel_task") || strings.EqualFold(r.Command, "WindowServer") {
+		return fmt.Errorf("refusing protected process %q", r.Command)
+	}
+	if r.User != "" {
+		current, _ := userName()
+		if current != "" && r.User != current {
+			return fmt.Errorf("refusing another user's process")
+		}
 	}
 	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
 		return err
 	}
 	return nil
-}
-func must(b []byte, e error) []byte {
-	if e != nil {
-		return nil
-	}
-	return b
 }
 
 type procRow struct {
@@ -116,9 +124,44 @@ type procRow struct {
 }
 
 func procsCmd(args []string, o output.Options) error {
+	if len(args) > 0 && args[0] == "kill" {
+		if len(args) != 2 {
+			return fmt.Errorf("usage: fleck procs kill PID")
+		}
+		pid, err := strconv.Atoi(args[1])
+		if err != nil {
+			return fmt.Errorf("invalid PID %q", args[1])
+		}
+		return killProcess(pid, o)
+	}
+	watch, query := false, ""
+	for _, arg := range args {
+		if arg == "--watch" {
+			watch = true
+		} else if query == "" {
+			query = arg
+		}
+	}
+	for {
+		rows, err := listProcesses(query)
+		if err != nil {
+			return err
+		}
+		if err := output.Print(rows, o); err != nil {
+			return err
+		}
+		if !watch || !output.IsTTY() {
+			return nil
+		}
+		time.Sleep(time.Second)
+		fmt.Print("\033[H\033[2J")
+	}
+}
+
+func listProcesses(query string) ([]procRow, error) {
 	out, err := exec.Command("ps", "-axo", "pid=,comm=,%cpu=,%mem=").Output()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	var rows []procRow
 	s := bufio.NewScanner(bytes.NewReader(out))
@@ -127,21 +170,59 @@ func procsCmd(args []string, o output.Options) error {
 		if len(f) < 4 {
 			continue
 		}
-		pid, _ := strconv.Atoi(f[0])
+		pid, err := strconv.Atoi(f[0])
+		if err != nil {
+			continue
+		}
 		rows = append(rows, procRow{PID: pid, Command: strings.Join(f[1:len(f)-2], " "), CPU: f[len(f)-2], Memory: f[len(f)-1]})
 	}
-	if len(args) > 0 && args[0] != "--watch" {
-		q := strings.ToLower(args[0])
-		var f []procRow
-		for _, r := range rows {
-			if strings.Contains(strings.ToLower(r.Command), q) {
-				f = append(f, r)
+	if query != "" {
+		q := strings.ToLower(query)
+		filtered := rows[:0]
+		for _, row := range rows {
+			if strings.Contains(strings.ToLower(row.Command), q) {
+				filtered = append(filtered, row)
 			}
 		}
-		rows = f
+		rows = filtered
 	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].CPU > rows[j].CPU })
-	return output.Print(rows, o)
+	sort.Slice(rows, func(i, j int) bool {
+		left, _ := strconv.ParseFloat(rows[i].CPU, 64)
+		right, _ := strconv.ParseFloat(rows[j].CPU, 64)
+		return left > right
+	})
+	return rows, s.Err()
+}
+
+func killProcess(pid int, o output.Options) error {
+	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
+		return fmt.Errorf("refusing protected PID %d", pid)
+	}
+	command, user := processIdentity(pid)
+	for _, protected := range []string{"launchd", "kernel_task", "WindowServer"} {
+		if strings.EqualFold(command, protected) {
+			return fmt.Errorf("refusing protected process %q", command)
+		}
+	}
+	current, _ := userName()
+	if user != "" && current != "" && user != current {
+		return fmt.Errorf("refusing another user's process")
+	}
+	if !confirm(o, fmt.Sprintf("Send SIGTERM to %s (pid %d)?", command, pid)) {
+		return fmt.Errorf("operation refused")
+	}
+	return syscall.Kill(pid, syscall.SIGTERM)
+}
+
+func processIdentity(pid int) (string, string) {
+	command, _ := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
+	user, _ := exec.Command("ps", "-o", "user=", "-p", strconv.Itoa(pid)).Output()
+	return strings.TrimSpace(string(command)), strings.TrimSpace(string(user))
+}
+
+func userName() (string, error) {
+	name, err := exec.Command("id", "-un").Output()
+	return strings.TrimSpace(string(name)), err
 }
 
 type dupGroup struct {
@@ -168,7 +249,7 @@ func findDuplicates(root string) ([]dupGroup, error) {
 			return nil
 		}
 		if d.IsDir() {
-			if p != root && (d.Name() == ".git" || d.Name() == "node_modules") {
+			if p != root && skipDuplicateDirectory(d.Name()) {
 				return filepath.SkipDir
 			}
 			return nil
@@ -177,7 +258,7 @@ func findDuplicates(root string) ([]dupGroup, error) {
 			return nil
 		}
 		i, e := d.Info()
-		if e == nil && i.Size() > 0 {
+		if e == nil && !isHardLinked(i) {
 			bySize[i.Size()] = append(bySize[i.Size()], p)
 		}
 		return nil
@@ -205,6 +286,16 @@ func findDuplicates(root string) ([]dupGroup, error) {
 	}
 	return out, nil
 }
+
+func skipDuplicateDirectory(name string) bool {
+	lower := strings.ToLower(name)
+	return lower == ".git" || lower == "node_modules" || strings.HasSuffix(lower, ".app") || strings.HasSuffix(lower, ".bundle") || strings.HasSuffix(lower, ".photoslibrary") || lower == "backups.backupdb" || lower == ".timemachine"
+}
+
+func isHardLinked(info fs.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Nlink > 1
+}
 func hashFile(p string) (string, error) {
 	b, e := os.ReadFile(p)
 	if e != nil {
@@ -215,18 +306,186 @@ func hashFile(p string) (string, error) {
 }
 
 func uninstallCmd(args []string, o output.Options, home string, cfg config.Config) error {
-	fmt.Println("Uninstall discovery is allow-list based and excludes protected Apple apps.")
-	protectedRoots := []string{"/Applications", "/Library/Application Support", "/Library/Preferences"}
-	var protected []string
-	for _, root := range protectedRoots {
-		if _, err := os.Stat(root); err == nil && needsElevation(root) {
-			protected = append(protected, root)
+	orphans := false
+	for _, arg := range args {
+		if arg == "--orphans" {
+			orphans = true
 		}
 	}
-	if _, err := requestElevation("Uninstall", protected, o); err != nil {
+	apps, err := discoverApps(home)
+	if err != nil {
 		return err
 	}
+	if orphans {
+		return output.Print(findOrphanCandidates(home, apps), o)
+	}
+	if len(apps) == 0 {
+		return fmt.Errorf("no removable applications found")
+	}
+	items := make([]uninstallItem, 0)
+	for _, app := range apps {
+		items = append(items, uninstallItem{Path: app.Path, Name: app.Name, BundleID: app.BundleID, Kind: "application"})
+		for _, leftover := range appLeftovers(home, app.BundleID) {
+			items = append(items, uninstallItem{Path: leftover, Name: filepath.Base(leftover), BundleID: app.BundleID, Kind: "leftover"})
+		}
+	}
+	if o.JSON {
+		return output.Print(items, o)
+	}
+	for _, item := range items {
+		fmt.Printf("  %s · %s\n", item.Kind, item.Path)
+	}
+	if o.DryRun {
+		return nil
+	}
+	if !confirm(o, "Move the selected application and leftovers to Trash?") {
+		return fmt.Errorf("operation refused")
+	}
+	roots := []string{filepath.Join(home, "Library")}
+	for _, root := range []string{"/Applications", filepath.Join(home, "Applications")} {
+		if _, e := os.Stat(root); e == nil {
+			roots = append(roots, root)
+		}
+	}
+	p, err := safety.NewPolicy(home, roots, cfg.Whitelist)
+	if err != nil {
+		return err
+	}
+	for _, item := range items {
+		elevated := needsElevation(item.Path)
+		if err := moveToTrashInternal(home, p, item.Path, "uninstall", o, elevated, false); err != nil {
+			fmt.Printf("failed: %s (%v)\n", item.Path, err)
+			continue
+		}
+		fmt.Println("moved:", item.Path)
+	}
 	return nil
+}
+
+type uninstallItem struct {
+	Path     string `json:"path"`
+	Name     string `json:"name"`
+	BundleID string `json:"bundle_id"`
+	Kind     string `json:"kind"`
+}
+
+type appInfo struct {
+	Path     string
+	Name     string
+	BundleID string
+}
+
+func discoverApps(home string) ([]appInfo, error) {
+	return discoverAppsInRoots([]string{"/Applications", filepath.Join(home, "Applications")})
+}
+
+func discoverAppsInRoots(roots []string) ([]appInfo, error) {
+	var apps []appInfo
+	for _, root := range roots {
+		entries, err := os.ReadDir(root)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() || !strings.HasSuffix(entry.Name(), ".app") || strings.HasPrefix(entry.Name(), "Apple ") {
+				continue
+			}
+			path := filepath.Join(root, entry.Name())
+			bundleID := readBundleID(filepath.Join(path, "Contents", "Info.plist"))
+			if bundleID == "" || strings.HasPrefix(bundleID, "com.apple.") {
+				continue
+			}
+			apps = append(apps, appInfo{Path: path, Name: strings.TrimSuffix(entry.Name(), ".app"), BundleID: bundleID})
+		}
+	}
+	sort.Slice(apps, func(i, j int) bool { return apps[i].Path < apps[j].Path })
+	return apps, nil
+}
+
+func readBundleID(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(b))
+	lastKey := ""
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return ""
+		}
+		switch value := token.(type) {
+		case xml.StartElement:
+			if value.Name.Local == "key" {
+				var key string
+				if decoder.DecodeElement(&key, &value) == nil {
+					lastKey = key
+				}
+			} else if value.Name.Local == "string" && lastKey == "CFBundleIdentifier" {
+				var id string
+				if decoder.DecodeElement(&id, &value) == nil {
+					return strings.TrimSpace(id)
+				}
+			}
+		}
+	}
+}
+
+func appLeftovers(home, bundleID string) []string {
+	if bundleID == "" {
+		return nil
+	}
+	var out []string
+	for _, root := range []string{
+		filepath.Join(home, "Library", "Application Support"),
+		filepath.Join(home, "Library", "Caches"),
+		filepath.Join(home, "Library", "Preferences"),
+		filepath.Join(home, "Library", "Containers"),
+		filepath.Join(home, "Library", "Group Containers"),
+		filepath.Join(home, "Library", "Saved Application State"),
+		filepath.Join(home, "Library", "LaunchAgents"),
+		filepath.Join(home, "Library", "Logs"),
+		filepath.Join(home, "Library", "WebKit"),
+		filepath.Join(home, "Library", "HTTPStorages"),
+		filepath.Join(home, "Library", "Cookies"),
+	} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			continue
+		}
+		for _, entry := range entries {
+			if entry.Name() == bundleID || strings.Contains(entry.Name(), bundleID) {
+				out = append(out, filepath.Join(root, entry.Name()))
+			}
+		}
+	}
+	return out
+}
+
+func findOrphanCandidates(home string, apps []appInfo) []uninstallItem {
+	installed := make(map[string]bool, len(apps))
+	for _, app := range apps {
+		installed[app.BundleID] = true
+	}
+	seen := make(map[string]bool)
+	var out []uninstallItem
+	for _, root := range []string{filepath.Join(home, "Library", "Application Support"), filepath.Join(home, "Library", "Caches"), filepath.Join(home, "Library", "Preferences")} {
+		entries, _ := os.ReadDir(root)
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.Contains(name, ".") && !installed[name] && strings.HasPrefix(name, "com.") {
+				path := filepath.Join(root, name)
+				if !seen[path] {
+					seen[path] = true
+					out = append(out, uninstallItem{Path: path, Name: name, BundleID: name, Kind: "orphan-candidate"})
+				}
+			}
+		}
+	}
+	return out
 }
 func cleanCmd(args []string, o output.Options, home string, cfg config.Config) error {
 	adminGranted := false
