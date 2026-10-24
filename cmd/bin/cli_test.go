@@ -122,6 +122,6 @@ func TestHomeSelectionWrapsWithModuleCount(t *testing.T) {
 	}
 }
 
-var ansiEscape = regexp.MustCompile(`\\x1b\\[[0-9;]*m`)
+var ansiEscape = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 func stripANSI(value string) string { return ansiEscape.ReplaceAllString(value, "") }
