@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
-	"syscall"
 
 	"golang.org/x/term"
 
@@ -441,10 +440,10 @@ func confirm(o output.Options, prompt string) bool {
 	return strings.EqualFold(s, "y") || strings.EqualFold(s, "yes")
 }
 func needsElevation(path string) bool {
-	return os.Geteuid() != 0 && syscall.Access(path, 2) != nil // POSIX W_OK
+	return platformNeedsElevation(path)
 }
 func requestElevation(module string, paths []string, o output.Options) (bool, error) {
-	if len(paths) == 0 || os.Geteuid() == 0 || o.DryRun || o.JSON {
+	if len(paths) == 0 || platformIsElevated() || o.DryRun || o.JSON {
 		return false, nil
 	}
 	fmt.Printf("%s: %d protected item(s) need administrator permission.\n", module, len(paths))

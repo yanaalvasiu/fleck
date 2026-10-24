@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode"
 
@@ -82,6 +81,9 @@ func portsCmd(args []string, o output.Options) error {
 }
 
 func listPorts(udp bool) ([]portRow, error) {
+	if runtime.GOOS == "windows" {
+		return listWindowsPorts(udp)
+	}
 	protocol := "-iTCP"
 	state := "-sTCP:LISTEN"
 	if udp {
@@ -145,6 +147,9 @@ func parseLsof(b []byte) []portRow {
 	return rows
 }
 func freePort(port string, group bool, o output.Options) error {
+	if runtime.GOOS == "windows" {
+		return freeWindowsPort(port, group, o)
+	}
 	out, err := exec.Command("lsof", "-nP", "-iTCP:"+port, "-sTCP:LISTEN", "-Fpcu").Output()
 	if err != nil {
 		return fmt.Errorf("lsof unavailable or no listener on %s: %w", port, err)
@@ -168,15 +173,15 @@ func freePort(port string, group bool, o output.Options) error {
 			return err
 		}
 	}
-	if err := syscall.Kill(pid, syscall.SIGTERM); err != nil {
+	if err := sendProcessSignal(pid, processSignalTerminate); err != nil {
 		return err
 	}
 	if !waitForProcessExit(pid, 3*time.Second) {
 		if group {
-			if err := syscall.Kill(-pid, syscall.SIGKILL); err != nil {
+			if err := sendProcessGroupSignal(pid, processSignalKill); err != nil {
 				return fmt.Errorf("SIGKILL process group: %w", err)
 			}
-		} else if err := syscall.Kill(pid, syscall.SIGKILL); err != nil {
+		} else if err := sendProcessSignal(pid, processSignalKill); err != nil {
 			return fmt.Errorf("SIGKILL: %w", err)
 		}
 	}
@@ -290,6 +295,9 @@ func truncateText(value string, width int) string {
 }
 
 func listProcesses(query string) ([]procRow, error) {
+	if runtime.GOOS == "windows" {
+		return listProcessesWindows(query)
+	}
 	out, err := exec.Command("ps", "-ww", "-axo", "pid=,args=,%cpu=,%mem=").Output()
 	if err != nil {
 		return nil, err
@@ -346,7 +354,7 @@ func killProcess(pid int, o output.Options) error {
 	if !confirm(o, fmt.Sprintf("Send SIGTERM to %s (pid %d)?", command, pid)) {
 		return fmt.Errorf("operation refused")
 	}
-	return syscall.Kill(pid, syscall.SIGTERM)
+	return sendProcessSignal(pid, processSignalTerminate)
 }
 
 func validateProcessTarget(pid int, command, user string) error {
@@ -368,23 +376,12 @@ func validateProcessTarget(pid int, command, user string) error {
 func waitForProcessExit(pid int, timeout time.Duration) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
-		if err := syscall.Kill(pid, 0); err != nil {
+		if !processAlive(pid) {
 			return true
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
-	return syscall.Kill(pid, 0) != nil
-}
-
-func processIdentity(pid int) (string, string) {
-	command, _ := exec.Command("ps", "-o", "comm=", "-p", strconv.Itoa(pid)).Output()
-	user, _ := exec.Command("ps", "-o", "user=", "-p", strconv.Itoa(pid)).Output()
-	return strings.TrimSpace(string(command)), strings.TrimSpace(string(user))
-}
-
-func userName() (string, error) {
-	name, err := exec.Command("id", "-un").Output()
-	return strings.TrimSpace(string(name)), err
+	return !processAlive(pid)
 }
 
 type dupGroup struct {
@@ -700,10 +697,6 @@ func skipDuplicateDirectory(name string) bool {
 	return lower == ".git" || lower == "node_modules" || strings.HasSuffix(lower, ".app") || strings.HasSuffix(lower, ".bundle") || strings.HasSuffix(lower, ".photoslibrary") || lower == "backups.backupdb" || lower == ".timemachine"
 }
 
-func isHardLinked(info fs.FileInfo) bool {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	return ok && stat.Nlink > 1
-}
 func hashFile(p string) (string, error) {
 	b, e := os.ReadFile(p)
 	if e != nil {
@@ -714,6 +707,9 @@ func hashFile(p string) (string, error) {
 }
 
 func uninstallCmd(args []string, o output.Options, home string, cfg config.Config) error {
+	if runtime.GOOS == "windows" {
+		return fmt.Errorf("uninstall is currently macOS-only; use Windows Settings or winget to remove applications")
+	}
 	orphans := false
 	for _, arg := range args {
 		if arg == "--orphans" {
@@ -907,17 +903,6 @@ func uninstallCask(name string, o output.Options) error {
 	cmd := exec.Command("brew", "uninstall", "--cask", name)
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	return cmd.Run()
-}
-
-func unloadLaunchAgent(path string) error {
-	if _, err := os.Stat(path); err != nil {
-		return err
-	}
-	uid := strconv.Itoa(os.Getuid())
-	if err := exec.Command("launchctl", "bootout", "gui/"+uid, path).Run(); err != nil {
-		return err
-	}
-	return nil
 }
 
 func discoverAppsInRoots(roots []string) ([]appInfo, error) {
@@ -1266,6 +1251,10 @@ func cleanIntro() (bool, error) {
 }
 
 func requestAdminAccess() error {
+	if runtime.GOOS == "windows" {
+		fmt.Println("\r\nWindows administrator access is not required for the approved user cache paths.")
+		return nil
+	}
 	fmt.Println("\r\nEnter your credentials:")
 	if err := exec.Command("sudo", "-v").Run(); err != nil {
 		return fmt.Errorf("administrator access was not granted: %w", err)
@@ -1480,6 +1469,16 @@ func scanUserCleanCandidates(home string, visible bool) ([]string, error) {
 		{filepath.Join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser", "Default", "Cache"), "Browsers"},
 		{filepath.Join(home, "Library", "Application Support", "Microsoft Edge", "Default", "Cache"), "Browsers"},
 		{filepath.Join(home, "Library", "Logs"), "User essentials"},
+	}
+	if runtime.GOOS == "windows" {
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			known = append(known,
+				struct{ path, category string }{filepath.Join(local, "Temp"), "User essentials"},
+				struct{ path, category string }{filepath.Join(local, "npm-cache"), "Developer tools"},
+				struct{ path, category string }{filepath.Join(local, "pip", "Cache"), "Developer tools"},
+				struct{ path, category string }{filepath.Join(local, "Google", "Chrome", "User Data", "Default", "Cache"), "Browsers"},
+			)
+		}
 	}
 	for _, item := range known {
 		info, statErr := os.Lstat(item.path)

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"time"
 )
 
@@ -31,6 +32,13 @@ func move(path, elevated string) error {
 		return err
 	}
 	trashDir := filepath.Join(home, ".Trash")
+	if runtime.GOOS == "windows" {
+		if local := os.Getenv("LOCALAPPDATA"); local != "" {
+			trashDir = filepath.Join(local, "Fleck", "Trash")
+		} else {
+			trashDir = filepath.Join(home, "AppData", "Local", "Fleck", "Trash")
+		}
+	}
 	if err := os.MkdirAll(trashDir, 0700); err != nil {
 		return err
 	}
