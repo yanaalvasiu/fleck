@@ -20,6 +20,7 @@ import (
 	"unicode"
 
 	"github.com/yanaalvasiu/fleck/internal/config"
+	"github.com/yanaalvasiu/fleck/internal/oplog"
 	"github.com/yanaalvasiu/fleck/internal/output"
 	"github.com/yanaalvasiu/fleck/internal/safety"
 	"golang.org/x/term"
@@ -764,6 +765,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return fmt.Errorf("nothing to do")
 	}
 	plan := makeCleanPlan(candidates)
+	markRecreatedSinceLastClean(home, plan)
 	if output.IsTTY() && !o.JSON {
 		fmt.Print("\033[H\033[2J")
 	}
@@ -914,10 +916,11 @@ func requestAdminAccess() error {
 }
 
 type cleanPlanItem struct {
-	Path     string `json:"path"`
-	Category string `json:"category"`
-	Name     string `json:"name"`
-	Bytes    int64  `json:"bytes"`
+	Path      string `json:"path"`
+	Category  string `json:"category"`
+	Name      string `json:"name"`
+	Bytes     int64  `json:"bytes"`
+	Recreated bool   `json:"recreated_since_last_clean,omitempty"`
 }
 
 func makeCleanPlan(paths []string) []cleanPlanItem {
@@ -931,6 +934,32 @@ func makeCleanPlan(paths []string) []cleanPlanItem {
 		})
 	}
 	return plan
+}
+
+func markRecreatedSinceLastClean(home string, plan []cleanPlanItem) {
+	entries, err := oplog.Read(home, binName)
+	if err != nil {
+		return
+	}
+	lastClean := make(map[string]time.Time)
+	for _, entry := range entries {
+		if entry.Action != "trash" || entry.Module != "clean" || entry.Result != "ok" {
+			continue
+		}
+		if previous, ok := lastClean[entry.Path]; !ok || entry.Time.After(previous) {
+			lastClean[entry.Path] = entry.Time
+		}
+	}
+	for i := range plan {
+		cleanedAt, ok := lastClean[plan[i].Path]
+		if !ok {
+			continue
+		}
+		info, err := os.Stat(plan[i].Path)
+		if err == nil && info.ModTime().After(cleanedAt) {
+			plan[i].Recreated = true
+		}
+	}
 }
 
 func cleanCategory(path string) string {
@@ -996,10 +1025,14 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 		fmt.Printf("%s➤ %s%s · %d items · %s\n", accent, category, reset, len(items), formatBytes(categoryTotal))
 		for _, group := range groupCleanItems(items) {
 			total += group.Bytes
+			recreated := ""
+			if group.Recreated {
+				recreated = " · ↻ recreated since last clean"
+			}
 			if group.Count > 1 {
-				fmt.Printf("  %s✓%s %s · %d items · %s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes))
+				fmt.Printf("  %s✓%s %s · %d items · %s%s\n", green, reset, group.Name, group.Count, formatBytes(group.Bytes), recreated)
 			} else {
-				fmt.Printf("  %s✓%s %-8s %s\n", green, reset, formatBytes(group.Bytes), group.Name)
+				fmt.Printf("  %s✓%s %-8s %s%s\n", green, reset, formatBytes(group.Bytes), group.Name, recreated)
 			}
 		}
 		fmt.Println()
@@ -1011,9 +1044,10 @@ func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 }
 
 type cleanDisplayGroup struct {
-	Name  string
-	Count int
-	Bytes int64
+	Name      string
+	Count     int
+	Bytes     int64
+	Recreated bool
 }
 
 func groupCleanItems(items []cleanPlanItem) []cleanDisplayGroup {
@@ -1029,6 +1063,7 @@ func groupCleanItems(items []cleanPlanItem) []cleanDisplayGroup {
 		}
 		groups[index].Count++
 		groups[index].Bytes += item.Bytes
+		groups[index].Recreated = groups[index].Recreated || item.Recreated
 	}
 	return groups
 }

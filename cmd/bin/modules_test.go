@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/yanaalvasiu/fleck/internal/config"
+	"github.com/yanaalvasiu/fleck/internal/oplog"
 	"github.com/yanaalvasiu/fleck/internal/output"
 	"github.com/yanaalvasiu/fleck/internal/safety"
 )
@@ -51,6 +53,31 @@ func TestGroupCleanItemsAggregatesBundleFamilies(t *testing.T) {
 	}
 	if groups[1].Name != "go-build" || groups[1].Count != 1 {
 		t.Fatalf("go-build group = %#v, want one item", groups[1])
+	}
+}
+
+func TestCleanPlanMarksRecreatedCache(t *testing.T) {
+	home := t.TempDir()
+	cache := filepath.Join(home, "Library", "Caches", "go-build")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "entry"), []byte("new"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := oplog.Append(home, binName, oplog.Entry{
+		Time:   time.Now().Add(-time.Minute),
+		Action: "trash",
+		Module: "clean",
+		Path:   cache,
+		Result: "ok",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	plan := makeCleanPlan([]string{cache})
+	markRecreatedSinceLastClean(home, plan)
+	if len(plan) != 1 || !plan[0].Recreated {
+		t.Fatalf("plan = %#v, want recreated cache marker", plan)
 	}
 }
 
