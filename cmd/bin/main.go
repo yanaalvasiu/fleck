@@ -487,6 +487,7 @@ func renderBrandHeader(v string, details bool, accent, muted, green, reset strin
 	}
 	right := []string{
 		"",
+		"",
 		fmt.Sprintf("%s%s %s%s", muted, binName, v, reset),
 		fmt.Sprintf("%shttps://github.com/yanaalvasiu/fleck%s", muted, reset),
 		fmt.Sprintf("%sA careful toolbox for your machine.%s", green, reset),
