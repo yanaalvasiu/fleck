@@ -435,18 +435,11 @@ func nextHomeSelection(selected int) int {
 func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 	theme := currentTheme(color)
 	reset, muted, accent, green := theme.Reset, theme.Muted, theme.Primary, theme.Success
-	versionStyle := muted
-	if color && muted != "" {
-		versionStyle = "\033[2m" + muted
-	}
 	if width < 1 {
 		width = 80
 	}
-	logo := fmt.Sprintf("%s  FFFFF  L      EEEEE  CCCCC  K   K\r\n  F      L      E      C      K  K \r\n  FFF    L      EEEE   C      KKK  \r\n  F      L      E      C      K  K \r\n  F      LLLLL  EEEEE  CCCCC  K   K%s", accent, reset)
-	if width < 34 {
-		logo = fmt.Sprintf("%s  FLECK%s", accent, reset)
-	}
 	showDetails := width >= 56
+	logo := renderBrandHeader(v, showDetails, accent, muted, green, reset)
 	row := func(index, number int, name, description string) string {
 		marker := "    "
 		arrowStyle := ""
@@ -463,17 +456,46 @@ func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 		return fmt.Sprintf("%s%d  %-17s%s%s%s\r\n", marker, number, name, muted, description, reset)
 	}
 
-	header := fmt.Sprintf("%s\r\n  %s%s%s\r\n", logo, versionStyle, v, reset)
-	if showDetails {
-		header += fmt.Sprintf("  %shttps://github.com/yanaalvasiu/fleck%s\r\n  %sA careful toolbox for your machine.%s\r\n\r\n", muted, reset, green, reset)
-	} else {
-		header += "\r\n"
-	}
+	header := logo + "\r\n"
 	footer := fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\r\n", muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
 	if !showDetails {
 		footer = fmt.Sprintf("  %s↑↓/jk%s · %sEnter%s · %sQ%s\r\n", muted, reset, muted, reset, muted, reset)
 	}
 	return header + moduleRows(modules.All, row) + "\r\n" + footer
+}
+
+func renderBrandHeader(v string, details bool, accent, muted, green, reset string) string {
+	if !details {
+		return fmt.Sprintf("%s  FLECK%s\r\n  %s%s%s", accent, reset, muted, v, reset)
+	}
+	mark := []string{
+		"  ______ _           _    ",
+		" / ____| |         | |   ",
+		"| |    | | ___  ___| | __",
+		"| |    | |/ _ \\/ __| |/ /",
+		"| |____| |  __/ (__|   < ",
+		" \\_____|_|\\___|\\___|_|\\_\\",
+	}
+	right := []string{
+		fmt.Sprintf("%s%s %s%s", muted, binName, v, reset),
+		fmt.Sprintf("%shttps://github.com/yanaalvasiu/fleck%s", muted, reset),
+		fmt.Sprintf("%sA careful toolbox for your machine.%s", green, reset),
+		"",
+		"",
+		"",
+	}
+	var b strings.Builder
+	for i, line := range mark {
+		b.WriteString(accent)
+		b.WriteString(line)
+		b.WriteString(reset)
+		b.WriteString("    ")
+		b.WriteString(right[i])
+		if i+1 < len(mark) {
+			b.WriteString("\r\n")
+		}
+	}
+	return b.String()
 }
 
 func moduleRows(descriptors []modules.Descriptor, row func(int, int, string, string) string) string {
