@@ -144,10 +144,6 @@ func freeWindowsPort(port string, group bool, o output.Options) error {
 	if owner.PID == "" {
 		return fmt.Errorf("nothing listening on %s", port)
 	}
-	fmt.Printf("%s (pid %s) owns port %s\n", owner.Command, owner.PID, port)
-	if !confirm(o, "Stop process?") {
-		return fmt.Errorf("operation refused")
-	}
 	pid, err := strconv.Atoi(owner.PID)
 	if err != nil {
 		return err
@@ -155,14 +151,29 @@ func freeWindowsPort(port string, group bool, o output.Options) error {
 	if err := validateProcessTarget(pid, owner.Command, owner.User); err != nil {
 		return err
 	}
+	if !o.JSON && output.IsTTY() {
+		fmt.Printf("%s (pid %s) owns port %s\n", owner.Command, owner.PID, port)
+	}
+	if err := confirmProcessAction(o, "Stop process?"); err != nil {
+		return err
+	}
+	command, user := processIdentity(pid)
+	if err := validateProcessTarget(pid, command, user); err != nil {
+		return fmt.Errorf("process changed before signal: %w", err)
+	}
 	if group {
-		return sendProcessGroupSignal(pid, processSignalKill)
+		if err := sendProcessGroupSignal(pid, processSignalKill); err != nil {
+			return err
+		}
+		return printProcessAction(o, "killed", pid, command)
 	}
 	if err := sendProcessSignal(pid, processSignalTerminate); err != nil {
 		return err
 	}
 	if !waitForProcessExit(pid, 3*time.Second) {
-		return sendProcessSignal(pid, processSignalKill)
+		if err := sendProcessSignal(pid, processSignalKill); err != nil {
+			return err
+		}
 	}
-	return nil
+	return printProcessAction(o, "terminated", pid, command)
 }

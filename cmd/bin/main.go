@@ -214,7 +214,7 @@ func homeScreen(v, home string, cfg config.Config) error {
 	selected := 0
 	for {
 		fmt.Print("\033[H\033[2J")
-		fmt.Print(renderHome(v, selected, os.Getenv("NO_COLOR") == ""))
+		fmt.Print(renderHomeAtWidth(v, selected, os.Getenv("NO_COLOR") == "", homeTerminalWidth()))
 
 		key, err := readHomeKey(os.Stdin)
 		if err != nil {
@@ -222,9 +222,9 @@ func homeScreen(v, home string, cfg config.Config) error {
 		}
 		switch key {
 		case homeKeyUp:
-			selected = (selected + 3) % 4
+			selected = previousHomeSelection(selected)
 		case homeKeyDown:
-			selected = (selected + 1) % 4
+			selected = nextHomeSelection(selected)
 		case homeKeyEnter:
 			command := modules.All[selected].Command
 			_ = term.Restore(fd, state)
@@ -356,6 +356,7 @@ func portsAndProcsPanel() error {
 	selected := 0
 	for {
 		fmt.Print("\033[H\033[2J")
+		fmt.Print(renderPortsPanelTabs(selected, output.IsTTY()))
 		if selected == 0 {
 			rows, listErr := listPorts(false)
 			if listErr != nil {
@@ -371,7 +372,7 @@ func portsAndProcsPanel() error {
 				printProcsTable(rows, "")
 			}
 		}
-		fmt.Println("\n  ↑↓ switch view   R refresh   Q return")
+		fmt.Println("  ↑↓ switch view   R refresh   Q return")
 		key, readErr := readHomeKey(os.Stdin)
 		if readErr != nil {
 			return readErr
@@ -387,41 +388,84 @@ func portsAndProcsPanel() error {
 	}
 }
 
+func renderPortsPanelTabs(selected int, color bool) string {
+	theme := currentTheme(color)
+	active := theme.Primary
+	reset := theme.Reset
+	if selected == 0 {
+		return fmt.Sprintf("%s▸ Ports%s    Processes\n\n", active, reset)
+	}
+	return fmt.Sprintf("  Ports    %s▸ Processes%s\n\n", active, reset)
+}
+
 func renderHome(v string, selected int, color bool) string {
+	return renderHomeAtWidth(v, selected, color, 80)
+}
+
+func homeTerminalWidth() int {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width < 1 {
+		return 80
+	}
+	return width
+}
+
+func previousHomeSelection(selected int) int {
+	if len(modules.All) == 0 {
+		return 0
+	}
+	return (selected + len(modules.All) - 1) % len(modules.All)
+}
+
+func nextHomeSelection(selected int) int {
+	if len(modules.All) == 0 {
+		return 0
+	}
+	return (selected + 1) % len(modules.All)
+}
+
+func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 	theme := currentTheme(color)
 	reset, muted, accent, green := theme.Reset, theme.Muted, theme.Primary, theme.Success
 	versionStyle := muted
 	if color && muted != "" {
 		versionStyle = "\033[2m" + muted
 	}
-	logo := fmt.Sprintf("%s  ______ _           _     \r\n |  ____| |         | |    \r\n | |__  | | ___  ___| | __ \r\n |  __| | |/ _ \\/ __| |/ / \r\n | |    | |  __/ (__|   <  \r\n |_|    |_|\\___|\\___|_|\\_\\%s", accent, reset)
+	if width < 1 {
+		width = 80
+	}
+	logo := fmt.Sprintf("%s  __ _           _    \r\n / _| | ___  ___| | __\r\n| |_| |/ _ \\/ __| |/ /\r\n|  _| |  __/ (__|   < \r\n|_| |_|\\___|\\___|_|\\_\\%s", accent, reset)
+	if width < 34 {
+		logo = fmt.Sprintf("%s  FLECK%s", accent, reset)
+	}
+	showDetails := width >= 56
 	row := func(index, number int, name, description string) string {
 		marker := "    "
-		labelStyle := ""
 		arrowStyle := ""
 		if index == selected {
 			marker = "  ▸ "
-			labelStyle = accent
 			arrowStyle = accent
 		}
 		if arrowStyle != "" {
 			marker = "  " + arrowStyle + "▸" + reset + " "
 		}
-		return fmt.Sprintf("%s%-2d  %s%-17s%s%s%s%s\r\n", marker, number, labelStyle, name, reset, muted, description, reset)
+		if !showDetails {
+			return fmt.Sprintf("%s%d  %s\r\n", marker, number, name)
+		}
+		return fmt.Sprintf("%s%d  %-17s%s%s%s\r\n", marker, number, name, muted, description, reset)
 	}
 
-	return fmt.Sprintf("%s\r\n"+
-		"  %s%s%s %s%s%s\r\n"+
-		"  %shttps://github.com/yanaalvasiu/fleck%s\r\n"+
-		"  %sA careful toolbox for your Mac.%s\r\n\r\n",
-		logo,
-		accent, binName, reset, versionStyle, v, reset,
-		muted, reset,
-		green, reset,
-	) +
-		moduleRows(modules.All, row) +
-		"\r\n" + fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\r\n",
-		muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
+	header := fmt.Sprintf("%s\r\n  %s%s%s\r\n", logo, versionStyle, v, reset)
+	if showDetails {
+		header += fmt.Sprintf("  %shttps://github.com/yanaalvasiu/fleck%s\r\n  %sA careful toolbox for your Mac.%s\r\n\r\n", muted, reset, green, reset)
+	} else {
+		header += "\r\n"
+	}
+	footer := fmt.Sprintf("  %s↑↓ / j k%s   %sEnter%s open   %sH%s history   %sS%s settings   %sU%s update   %sV%s version   %sQ%s quit\r\n", muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset, muted, reset)
+	if !showDetails {
+		footer = fmt.Sprintf("  %s↑↓/jk%s · %sEnter%s · %sQ%s\r\n", muted, reset, muted, reset, muted, reset)
+	}
+	return header + moduleRows(modules.All, row) + "\r\n" + footer
 }
 
 func moduleRows(descriptors []modules.Descriptor, row func(int, int, string, string) string) string {
@@ -492,6 +536,10 @@ func requestElevation(module string, paths []string, o output.Options) (bool, er
 	return true, nil
 }
 func moveToTrashInternal(home string, p safety.Policy, path, module string, o output.Options, elevated, askConfirmation bool) error {
+	return moveToTrashInternalAuthorized(home, p, path, module, o, elevated, false, askConfirmation)
+}
+
+func moveToTrashInternalAuthorized(home string, p safety.Policy, path, module string, o output.Options, elevated, sudoAuthorized, askConfirmation bool) error {
 	resolved, err := p.Validate(path)
 	if err != nil {
 		return err
@@ -504,7 +552,11 @@ func moveToTrashInternal(home string, p safety.Policy, path, module string, o ou
 		return fmt.Errorf("operation refused")
 	}
 	if elevated {
-		err = trash.MoveWithSudo(resolved)
+		if sudoAuthorized {
+			err = trash.MoveWithSudoAuthorized(resolved)
+		} else {
+			err = trash.MoveWithSudo(resolved)
+		}
 	} else {
 		err = trash.Move(resolved)
 	}

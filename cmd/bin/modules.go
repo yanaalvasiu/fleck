@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/gif"
@@ -92,6 +93,12 @@ func listPorts(udp bool) ([]portRow, error) {
 	}
 	out, err := exec.Command("lsof", "-nP", protocol, state, "-Fpcun").Output()
 	if err != nil {
+		if len(out) == 0 {
+			var exitErr *exec.ExitError
+			if errors.As(err, &exitErr) {
+				return []portRow{}, nil
+			}
+		}
 		return nil, fmt.Errorf("lsof unavailable or no listeners: %w", err)
 	}
 	rows := parseLsof(out)
@@ -159,19 +166,19 @@ func freePort(port string, group bool, o output.Options) error {
 		return fmt.Errorf("nothing listening on %s", port)
 	}
 	r := rows[0]
-	fmt.Printf("%s (pid %s) owns port %s\n", r.Command, r.PID, port)
-	if !confirm(o, "Send SIGTERM?") {
-		return fmt.Errorf("operation refused")
-	}
 	pid, _ := strconv.Atoi(r.PID)
 	if err := validateProcessTarget(pid, r.Command, r.User); err != nil {
-		command, user := processIdentity(pid)
-		if command == "" {
-			return err
-		}
-		if err = validateProcessTarget(pid, command, user); err != nil {
-			return err
-		}
+		return err
+	}
+	if !o.JSON && output.IsTTY() {
+		fmt.Printf("%s (pid %s) owns port %s\n", r.Command, r.PID, port)
+	}
+	if err := confirmProcessAction(o, "Send SIGTERM?"); err != nil {
+		return err
+	}
+	command, user := processIdentity(pid)
+	if err := validateProcessTarget(pid, command, user); err != nil {
+		return fmt.Errorf("process changed before signal: %w", err)
 	}
 	if err := sendProcessSignal(pid, processSignalTerminate); err != nil {
 		return err
@@ -185,7 +192,7 @@ func freePort(port string, group bool, o output.Options) error {
 			return fmt.Errorf("SIGKILL: %w", err)
 		}
 	}
-	return nil
+	return printProcessAction(o, "terminated", pid, command)
 }
 
 func enrichPortRow(row *portRow) {
@@ -351,15 +358,25 @@ func killProcess(pid int, o output.Options) error {
 	if err := validateProcessTarget(pid, command, user); err != nil {
 		return err
 	}
-	if !confirm(o, fmt.Sprintf("Send SIGTERM to %s (pid %d)?", command, pid)) {
-		return fmt.Errorf("operation refused")
+	if err := confirmProcessAction(o, fmt.Sprintf("Send SIGTERM to %s (pid %d)?", command, pid)); err != nil {
+		return err
 	}
-	return sendProcessSignal(pid, processSignalTerminate)
+	currentCommand, currentUser := processIdentity(pid)
+	if err := validateProcessTarget(pid, currentCommand, currentUser); err != nil {
+		return fmt.Errorf("process changed before signal: %w", err)
+	}
+	if err := sendProcessSignal(pid, processSignalTerminate); err != nil {
+		return err
+	}
+	return printProcessAction(o, "terminated", pid, currentCommand)
 }
 
 func validateProcessTarget(pid int, command, user string) error {
 	if pid <= 1 || pid == os.Getpid() || pid == os.Getppid() {
 		return fmt.Errorf("refusing protected PID %d", pid)
+	}
+	if strings.TrimSpace(command) == "" {
+		return fmt.Errorf("refusing unidentified PID %d", pid)
 	}
 	for _, protected := range []string{"launchd", "kernel_task", "WindowServer"} {
 		if strings.EqualFold(command, protected) {
@@ -371,6 +388,26 @@ func validateProcessTarget(pid int, command, user string) error {
 		return fmt.Errorf("refusing another user's process")
 	}
 	return nil
+}
+
+func confirmProcessAction(o output.Options, prompt string) error {
+	if o.Yes {
+		return nil
+	}
+	if o.JSON || !output.IsTTY() {
+		return fmt.Errorf("refusing destructive process action without --yes in non-interactive mode")
+	}
+	if !confirm(o, prompt) {
+		return fmt.Errorf("operation refused")
+	}
+	return nil
+}
+
+func printProcessAction(o output.Options, action string, pid int, command string) error {
+	if !o.JSON {
+		return nil
+	}
+	return output.Print(map[string]any{"action": action, "command": command, "pid": pid}, o)
 }
 
 func waitForProcessExit(pid int, timeout time.Duration) bool {
@@ -1017,7 +1054,8 @@ func findOrphanCandidates(home string, apps []appInfo) []uninstallItem {
 }
 func cleanCmd(args []string, o output.Options, home string, cfg config.Config) error {
 	adminGranted := false
-	if output.IsTTY() && !o.JSON && !o.DryRun {
+	destructive := !o.JSON && !o.DryRun
+	if destructive && output.IsTTY() {
 		continueScan, err := cleanIntro()
 		if err != nil {
 			return err
@@ -1025,7 +1063,10 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		if !continueScan {
 			return nil
 		}
-		if err := requestAdminAccess(); err != nil {
+	}
+	var err error
+	if destructive && runtime.GOOS != "windows" {
+		if err = authorizeCleanBeforeScan(requestAdminAccess); err != nil {
 			return err
 		}
 		adminGranted = true
@@ -1088,6 +1129,8 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	}
 	elevated := adminGranted
 	if len(protected) > 0 && !adminGranted {
+		// Authorization happens before scanning, so protected items should only
+		// reach this fallback for platforms that do not require sudo up front.
 		elevated, err = requestElevation("Clean", protected, o)
 		if err != nil {
 			return err
@@ -1114,7 +1157,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 			continue
 		}
 		bytes := directorySize(x)
-		if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
+		if e := moveToTrashInternalAuthorized(home, p, x, "clean", o, useSudo, adminGranted, false); e != nil {
 			failed++
 			printCleanDeleteProgress(index+1, len(candidates), filepath.Base(x))
 			if output.IsTTY() {
@@ -1137,6 +1180,13 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 	}
 	if moved == 0 {
 		return fmt.Errorf("no cache items were moved to Trash")
+	}
+	return nil
+}
+
+func authorizeCleanBeforeScan(authorize func() error) error {
+	if err := authorize(); err != nil {
+		return fmt.Errorf("administrator access was not granted before clean scan: %w", err)
 	}
 	return nil
 }
