@@ -2,6 +2,8 @@
 
 Fleck is an open-source, no-telemetry utility CLI for macOS and Windows with four cautious modules: Clean, Uninstall, Duplicates, and Ports & Procs. It uses a shared allow-list safety policy and recoverable Trash moves where the platform provides them.
 
+Running `fleck` without a command opens the keyboard-driven home screen when standard output is a terminal. Use `↑`/`↓` or `j`/`k` to move, Enter to open a module, and `q` to quit. The home screen keeps the selected state on the arrow, adapts to narrow terminals by hiding secondary descriptions, and falls back to command help when output is redirected or not a TTY.
+
 ## Install
 
 ```sh

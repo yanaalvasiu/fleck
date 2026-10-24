@@ -457,7 +457,7 @@ func renderHomeAtWidth(v string, selected int, color bool, width int) string {
 
 	header := fmt.Sprintf("%s\r\n  %s%s%s\r\n", logo, versionStyle, v, reset)
 	if showDetails {
-		header += fmt.Sprintf("  %shttps://github.com/yanaalvasiu/fleck%s\r\n  %sA careful toolbox for your Mac.%s\r\n\r\n", muted, reset, green, reset)
+		header += fmt.Sprintf("  %shttps://github.com/yanaalvasiu/fleck%s\r\n  %sA careful toolbox for your machine.%s\r\n\r\n", muted, reset, green, reset)
 	} else {
 		header += "\r\n"
 	}

@@ -113,6 +113,46 @@ func TestCleanMovesCacheToTrash(t *testing.T) {
 	}
 }
 
+func TestCleanAuthorizedMoveMovesApprovedItemToSharedTrash(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+
+	cache := filepath.Join(home, "Library", "Caches", "ApprovedApp")
+	if err := os.MkdirAll(cache, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cache, "cache.db"), []byte("fixture"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	p, err := safety.NewPolicy(home, []string{filepath.Join(home, "Library")}, config.Config{}.Whitelist)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := moveToTrashInternalAuthorized(home, p, cache, "clean", output.Options{Yes: true}, false, true, false); err != nil {
+		t.Fatalf("authorized clean move error = %v", err)
+	}
+	if _, err := os.Stat(cache); !os.IsNotExist(err) {
+		t.Fatalf("approved cache still exists after move: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(home, ".Trash", "ApprovedApp")); err != nil {
+		t.Fatalf("approved cache was not moved to shared Trash: %v", err)
+	}
+}
+
+func TestCleanAuthorizationRunsBeforeProtectedScan(t *testing.T) {
+	called := false
+	if err := authorizeCleanBeforeScan(func() error {
+		called = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !called {
+		t.Fatal("clean scan authorization was not requested")
+	}
+}
+
 func TestFindDuplicatesSkipsHardlinksAndIncludesEmptyFiles(t *testing.T) {
 	root := t.TempDir()
 	first := filepath.Join(root, "empty-a")

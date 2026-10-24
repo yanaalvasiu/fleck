@@ -23,6 +23,13 @@ func MoveWithSudo(path string) error {
 	if err := exec.Command("sudo", "-v").Run(); err != nil {
 		return fmt.Errorf("sudo authorization failed: %w", err)
 	}
+	return MoveWithSudoAuthorized(path)
+}
+
+// MoveWithSudoAuthorized moves an already-validated path with an existing sudo
+// authorization. Callers must obtain authorization before scanning protected
+// locations and use this function only for that same approved operation.
+func MoveWithSudoAuthorized(path string) error {
 	return move(path, "sudo")
 }
 

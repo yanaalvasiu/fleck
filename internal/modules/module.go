@@ -12,5 +12,5 @@ var All = []Descriptor{
 	{Command: "clean", Name: "Clean", Description: "Free up disk space"},
 	{Command: "uninstall", Name: "Uninstall", Description: "Remove apps completely"},
 	{Command: "duplicates", Name: "Duplicates", Description: "Find repeated files"},
-	{Command: "ports", Name: "Ports & Procs", Description: "Inspect local processes"},
+	{Command: "ports", Name: "Ports & Procs", Description: "Inspect ports and processes"},
 }
