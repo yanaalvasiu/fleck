@@ -50,7 +50,7 @@ func TestKillProcessTerminatesSpawnedFixtureOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := fixture.Wait(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ProcessState.ExitCode() != -1 {
+		if exitErr, ok := err.(*exec.ExitError); !ok || exitErr.ExitCode() != -1 {
 			t.Fatalf("fixture wait = %v", err)
 		}
 	}
