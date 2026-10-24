@@ -4,6 +4,7 @@ package main
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/yanaalvasiu/fleck/internal/output"
@@ -49,5 +50,14 @@ func TestDiscoverAppsAndExactLeftovers(t *testing.T) {
 	items := appLeftovers(home, apps[0].BundleID)
 	if len(items) != 1 || items[0] != filepath.Join(leftover, "com.example.demo.plist") {
 		t.Fatalf("leftovers=%#v", items)
+	}
+}
+
+func TestHomeRenderShowsFleckWordmarkAndMenu(t *testing.T) {
+	rendered := renderHome("0.1.8", 0, false)
+	for _, want := range []string{"______ _", "fleck 0.1.8", "Clean", "Ports & Procs", "Enter open"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("home render missing %q:\n%s", want, rendered)
+		}
 	}
 }

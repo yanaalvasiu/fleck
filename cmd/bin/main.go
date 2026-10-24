@@ -383,6 +383,7 @@ func portsAndProcsPanel() error {
 func renderHome(v string, selected int, color bool) string {
 	theme := currentTheme(color)
 	reset, muted, accent, green := theme.Reset, theme.Muted, theme.Primary, theme.Success
+	logo := fmt.Sprintf("%s  ______ _           _     \r\n |  ____| |         | |    \r\n | |__  | | ___  ___| | __ \r\n |  __| | |/ _ \\/ __| |/ / \r\n | |    | |  __/ (__|   <  \r\n |_|    |_|\\___|\\___|_|\\_\\%s", accent, reset)
 	row := func(index, number int, name, description string) string {
 		marker := "    "
 		start := ""
@@ -397,9 +398,11 @@ func renderHome(v string, selected int, color bool) string {
 		return fmt.Sprintf("%s%s%s%-2d  %-17s%s%s%s\r\n", start, labelStyle, marker, number, name, muted, description, reset)
 	}
 
-	return fmt.Sprintf("  %s%s%s  %s%s%s\r\n"+
+	return fmt.Sprintf("%s\r\n"+
+		"  %s%s%s %s%s%s\r\n"+
 		"  %shttps://github.com/yanaalvasiu/fleck%s\r\n"+
 		"  %sA careful toolbox for your Mac.%s\r\n\r\n",
+		logo,
 		accent, binName, reset, muted, v, reset,
 		muted, reset,
 		green, reset,
