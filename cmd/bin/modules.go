@@ -647,6 +647,7 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		}
 		adminGranted = true
 	}
+	freeBefore, _ := freeSpaceBytes(home)
 	p, err := newPolicy(home, cfg)
 	if err != nil {
 		return err
@@ -681,7 +682,9 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return fmt.Errorf("nothing to do")
 	}
 	plan := makeCleanPlan(candidates)
-	fmt.Print("\033[H\033[2J")
+	if output.IsTTY() && !o.JSON {
+		fmt.Print("\033[H\033[2J")
+	}
 	printCleanPlan(plan, o.DryRun, len(cfg.Whitelist))
 	if o.DryRun {
 		return nil
@@ -703,30 +706,31 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		}
 	}
 	moved, skipped, failed := 0, 0, 0
+	trackedBytes := int64(0)
 	for _, x := range candidates {
 		if _, e := p.Validate(x); e != nil {
-			fmt.Printf("skip: %s (%v)\n", x, e)
+			fmt.Printf("  ◎ skipped · %s (%v)\n", filepath.Base(x), e)
 			skipped++
 			continue
 		}
 		useSudo := elevated && needsElevation(x)
 		if !useSudo && needsElevation(x) {
-			fmt.Println("skip (requires sudo):", x)
+			fmt.Printf("  ◎ skipped · %s (requires administrator permission)\n", filepath.Base(x))
 			skipped++
 			continue
 		}
+		bytes := directorySize(x)
 		if e := moveToTrashInternal(home, p, x, "clean", o, useSudo, false); e != nil {
-			fmt.Printf("failed: %s (%v)\n", x, e)
+			fmt.Printf("  ✗ failed · %s (%v)\n", filepath.Base(x), e)
 			failed++
 			continue
 		}
+		trackedBytes += bytes
+		fmt.Printf("  ✓ moved to Trash · %s · %s\n", filepath.Base(x), formatBytes(bytes))
 		moved++
 	}
-	fmt.Printf("\nMoved %d item(s) to Trash", moved)
-	if skipped > 0 || failed > 0 {
-		fmt.Printf("; skipped %d; failed %d", skipped, failed)
-	}
-	fmt.Println(".")
+	freeAfter, _ := freeSpaceBytes(home)
+	printCleanupSummary(trackedBytes, moved, freeBefore, freeAfter, skipped, failed)
 	if failed > 0 {
 		return fmt.Errorf("%d cache item(s) could not be moved to Trash", failed)
 	}
@@ -734,6 +738,50 @@ func cleanCmd(args []string, o output.Options, home string, cfg config.Config) e
 		return fmt.Errorf("no cache items were moved to Trash")
 	}
 	return nil
+}
+
+func freeSpaceBytes(path string) (int64, error) {
+	out, err := exec.Command("df", "-kP", path).Output()
+	if err != nil {
+		return 0, err
+	}
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) < 2 {
+		return 0, fmt.Errorf("unexpected df output")
+	}
+	fields := strings.Fields(lines[len(lines)-1])
+	if len(fields) < 4 {
+		return 0, fmt.Errorf("unexpected df fields")
+	}
+	kilobytes, err := strconv.ParseInt(fields[3], 10, 64)
+	if err != nil {
+		return 0, err
+	}
+	return kilobytes * 1024, nil
+}
+
+func printCleanupSummary(trackedBytes int64, moved int, freeBefore, freeAfter int64, skipped, failed int) {
+	separator := strings.Repeat("=", 70)
+	fmt.Println(separator)
+	fmt.Printf("Cleanup complete\n")
+	fmt.Printf("Tracked cleanup: %s | Items cleaned: %d\n", formatBytes(trackedBytes), moved)
+	if freeBefore > 0 && freeAfter > 0 {
+		delta := freeAfter - freeBefore
+		fmt.Printf("Free space: %s (%s)\n", formatBytes(freeAfter), signedBytes(delta))
+	} else {
+		fmt.Println("Free space: unavailable")
+	}
+	if skipped > 0 || failed > 0 {
+		fmt.Printf("Skipped: %d | Failed: %d\n", skipped, failed)
+	}
+	fmt.Println(separator)
+}
+
+func signedBytes(bytes int64) string {
+	if bytes >= 0 {
+		return "+" + formatBytes(bytes)
+	}
+	return "-" + formatBytes(-bytes)
 }
 
 func cleanIntro() (bool, error) {
@@ -745,7 +793,7 @@ func cleanIntro() (bool, error) {
 	defer func() { _ = term.Restore(fd, state) }()
 
 	reset, title, muted, accent, keyStyle := "", "", "", "", ""
-	if os.Getenv("NO_COLOR") == "" {
+	if os.Getenv("NO_COLOR") == "" && output.IsTTY() {
 		reset = "\033[0m"
 		title = "\033[1;38;5;141m"
 		muted = "\033[38;5;245m"
@@ -838,7 +886,7 @@ func directorySize(root string) int64 {
 func printCleanPlan(plan []cleanPlanItem, dryRun bool, whitelistCount int) {
 	total := int64(0)
 	reset, title, muted, accent, green, yellow := "", "", "", "", "", ""
-	if os.Getenv("NO_COLOR") == "" {
+	if os.Getenv("NO_COLOR") == "" && output.IsTTY() {
 		reset = "\033[0m"
 		title = "\033[1;38;5;141m"
 		muted = "\033[38;5;245m"
