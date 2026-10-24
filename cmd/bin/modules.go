@@ -314,6 +314,12 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 			root = arg
 		}
 	}
+	if absolute, err := filepath.Abs(root); err == nil {
+		root = filepath.Clean(absolute)
+	}
+	if absolute, err := filepath.Abs(home); err == nil {
+		home = filepath.Clean(absolute)
+	}
 	if output.IsTTY() && !o.JSON {
 		fmt.Printf("Scanning %s for exact duplicates...\n", root)
 	}
@@ -324,7 +330,8 @@ func duplicateCmd(args []string, o output.Options, home string, cfg config.Confi
 	if !trashAction {
 		return output.Print(groups, o)
 	}
-	if root != home {
+	rel, err := filepath.Rel(home, root)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return fmt.Errorf("duplicate actions are limited to the current home directory")
 	}
 	if o.JSON {

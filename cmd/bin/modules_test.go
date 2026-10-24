@@ -123,7 +123,7 @@ func TestDuplicateTrashKeepsOneCopy(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := duplicateCmd([]string{"--trash"}, output.Options{Yes: true}, home, config.Config{}); err != nil {
+	if err := duplicateCmd([]string{root, "--trash"}, output.Options{Yes: true}, home, config.Config{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Stat(first); err != nil {
