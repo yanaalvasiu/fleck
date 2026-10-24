@@ -43,6 +43,40 @@ func TestSafeCleanCandidatesUsesApprovedTopLevelRoots(t *testing.T) {
 	}
 }
 
+func TestSafeCleanCandidatesIncludesRequestedCacheFamilies(t *testing.T) {
+	home := t.TempDir()
+	paths := []string{
+		filepath.Join(home, ".npm"), filepath.Join(home, ".cache", "pip"),
+		filepath.Join(home, "Library", "Caches", "go-build"), filepath.Join(home, ".cache", "huggingface"),
+		filepath.Join(home, "Library", "pnpm", "store"), filepath.Join(home, ".yarn", "berry", "cache"),
+		filepath.Join(home, ".gradle", "caches"), filepath.Join(home, "Library", "Developer", "Xcode", "DerivedData"),
+		filepath.Join(home, "Library", "Developer", "CoreSimulator", "Caches"),
+		filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Cache"),
+		filepath.Join(home, "Library", "Logs"),
+	}
+	for _, path := range paths {
+		if err := os.MkdirAll(path, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	items, err := safeCleanCandidates(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range paths {
+		found := false
+		for _, item := range items {
+			if item == want {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("requested cache family was not scanned: %s", want)
+		}
+	}
+}
+
 func TestGroupCleanItemsAggregatesBundleFamilies(t *testing.T) {
 	groups := groupCleanItems([]cleanPlanItem{
 		{Name: "com.apple.bird", Bytes: 1024},

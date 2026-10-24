@@ -1507,18 +1507,41 @@ func scanUserCleanCandidates(home string, visible bool) ([]string, error) {
 	// recursively guess under arbitrary home-directory paths.
 	known := []struct{ path, category string }{
 		{filepath.Join(home, ".npm"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "npm"), "Developer tools"},
 		{filepath.Join(home, ".cache", "pip"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "pip"), "Developer tools"},
 		{filepath.Join(home, ".cache", "go-build"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "go-build"), "Developer tools"},
 		{filepath.Join(home, ".cache", "huggingface"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "huggingface"), "Developer tools"},
 		{filepath.Join(home, ".pnpm-store"), "Developer tools"},
+		{filepath.Join(home, "Library", "pnpm", "store"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "pnpm"), "Developer tools"},
 		{filepath.Join(home, ".yarn", "berry", "cache"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "Yarn"), "Developer tools"},
 		{filepath.Join(home, ".gradle", "caches"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "Gradle"), "Developer tools"},
 		{filepath.Join(home, "Library", "Developer", "Xcode", "DerivedData"), "Developer tools"},
 		{filepath.Join(home, "Library", "Developer", "CoreSimulator", "Caches"), "Developer tools"},
+		{filepath.Join(home, "Library", "Caches", "Google", "Chrome"), "Browsers"},
+		{filepath.Join(home, "Library", "Caches", "BraveSoftware", "Brave-Browser"), "Browsers"},
+		{filepath.Join(home, "Library", "Caches", "Microsoft Edge"), "Browsers"},
 		{filepath.Join(home, "Library", "Application Support", "Google", "Chrome", "Default", "Cache"), "Browsers"},
 		{filepath.Join(home, "Library", "Application Support", "BraveSoftware", "Brave-Browser", "Default", "Cache"), "Browsers"},
 		{filepath.Join(home, "Library", "Application Support", "Microsoft Edge", "Default", "Cache"), "Browsers"},
 		{filepath.Join(home, "Library", "Logs"), "User essentials"},
+	}
+	// CoreSimulator stores per-device caches below Devices/<id>/data. Only
+	// explicit cache directories are added; the device tree itself is never moved.
+	devices := filepath.Join(home, "Library", "Developer", "CoreSimulator", "Devices")
+	if entries, readErr := os.ReadDir(devices); readErr == nil {
+		for _, entry := range entries {
+			if entry.IsDir() {
+				known = append(known, struct{ path, category string }{
+					filepath.Join(devices, entry.Name(), "data", "Library", "Caches"), "Developer tools",
+				})
+			}
+		}
 	}
 	if runtime.GOOS == "windows" {
 		if local := os.Getenv("LOCALAPPDATA"); local != "" {
